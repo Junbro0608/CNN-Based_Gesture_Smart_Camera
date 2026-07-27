@@ -435,43 +435,7 @@ CH_wrapper.sv
 
 CH_tb.sv
     CH Self-checking Testbench
-```
 
-모든 RTL 파일은 SystemVerilog 배열 포트를 사용하므로 `.sv` 확장자로 저장하고 Vivado에서 SystemVerilog Source로 추가한다.
-
-## 14. Git 브랜치
-
-- 작업 브랜치: `jiwon`
-- 원격 추적 브랜치: `origin/jiwon`
-
-변경 사항 업로드:
-
-```bash
-git status
-git add README.md
-git add FinalProject_Conv_CH/FinalProject_Conv_CH.srcs/sources_1/new/CH.sv
-git add FinalProject_Conv_CH/FinalProject_Conv_CH.srcs/sources_1/new/CH_wrapper.sv
-git add FinalProject_Conv_CH/FinalProject_Conv_CH.xpr
-git commit -m "Add CH convolution module and 8-channel wrapper"
-git push
-```
-
-Vivado의 Cache, Log 및 자동 생성 파일은 `.gitignore`에서 제외한다.
-
-```gitignore
-**/.Xil/
-**/*.cache/
-**/*.runs/
-**/*.gen/
-**/*.sim/
-**/*.hw/
-**/ip_user_files/
-
-*.jou
-*.log
-*.str
-*.wdb
-```
 
 ## 15. 다음 작업
 
