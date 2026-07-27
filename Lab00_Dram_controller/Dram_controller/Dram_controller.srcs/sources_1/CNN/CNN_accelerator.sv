@@ -19,7 +19,7 @@ module CNN_accelerator #(
         .rst_n(rst_n)
     );
 
-    //Wigth(20,480 bytes)
+    //Weigth(20,480 bytes)
     pingpongBuffer #(
         .ADDR_WIDTH(WT_ADDR_WIDTH),
         .DATA_WIDTH(WT_DATA_WIDTH)

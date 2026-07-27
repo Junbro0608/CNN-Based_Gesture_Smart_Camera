@@ -95,4 +95,5 @@ __pycache__/
 # =================================================================
 # 로그 폴더와 그 안의 .log 파일은 형상 관리에 포함함
 !logs/
-!logs/*.log
+!logs/*.logLab01_AI_Detect_humen/.venv/
+Lab01_AI_Detect_humen/.venv/
