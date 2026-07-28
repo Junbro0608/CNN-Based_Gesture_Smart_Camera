@@ -1,77 +1,86 @@
-from train import PersonClassifierCNN
 import cv2
 import torch
-import torch.nn as nn
-from torchvision import transforms
+import torchvision.transforms as transforms
+from PIL import Image
+from person_classifier_model import PersonClassifierCNN
 
+# ==========================================
+# 1. 사용자 설정 및 모델 로드
+# ==========================================
+# TODO: 학습할 때 사용했던 본인의 모델 클래스를 임포트하세요.
+# from your_model_file import PersonClassifierCNN
 
-# 2. 모델 로드 (양자화는 주로 CPU 환경에서 원활히 수행됩니다)
-device = torch.device('cpu')
+# 가중치 파일 경로
+WEIGHT_PATH = 'person_classifier.pth' # 또는 'person_classifier_best_acc.pth'
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"사용 중인 디바이스: {device}")
+
+# 모델 초기화 및 가중치 로드
 model = PersonClassifierCNN().to(device)
+model.load_state_dict(torch.load(WEIGHT_PATH, map_location=device))
+model.eval()  # 평가 모드로 전환 (BatchNorm, Dropout 비활성화)
 
-# FP32로 학습된 가중치 파일 로드
-model.load_state_dict(torch.load('person_classifier_best_acc.pth', map_location=device))
-model.eval()
-
-print("FP32 모델 로드 완료. INT8 양자화(Dynamic Quantization) 적용 중...")
-
-# 3. INT8 양자화 적용 (Linear 레이어 등을 INT8 정밀도로 변환)
-quantized_model = torch.quantization.quantize_dynamic(
-    model,  
-    {nn.Linear},  # 양자화 대상 레이어 지정
-    dtype=torch.qint8
-)
-
-print("INT8 양자화 완료!")
-
-# 4. 이미지 전처리 파이프라인
+# ==========================================
+# 2. 이미지 전처리 설정 (학습할 때와 동일하게 맞춤)
+# ==========================================
+# 데이터셋 생성 시 128x128 해상도를 기준으로 했으므로 동일하게 리사이즈합니다.
 transform = transforms.Compose([
-    transforms.ToPILImage(),
-    transforms.Grayscale(num_output_channels=1),
-    transforms.Resize((156, 156)),
+    transforms.Resize((64, 64)),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.5], std=[0.5]),
+    # 학습 시 Normalize를 사용했다면 여기에 추가하세요.
+    # transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
 ])
 
-# 5. 웹캠 열기
-cap = cv2.VideoCapture(0)
+# ==========================================
+# 3. 웹캠 캡처 및 실시간 추론
+# ==========================================
+cap = cv2.VideoCapture(0) # 0번(기본) 웹캠 열기
 
 if not cap.isOpened():
     print("웹캠을 열 수 없습니다.")
     exit()
 
-print("INT8 양자화 모델 웹캠 추론 시작! 종료하려면 'q'를 누르세요.")
+print("웹캠이 켜졌습니다. 종료하려면 'q' 키를 누르세요.")
 
-with torch.no_grad():
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            print("프레임을 읽지 못했습니다.")
-            break
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        print("프레임을 읽어올 수 없습니다.")
+        break
 
-        # 학습과 동일하게 1채널로 전처리
-        input_tensor = transform(frame).unsqueeze(0) # 배치 차원 추가
+    # OpenCV 프레임(BGR)을 PIL 이미지(RGB)로 변환
+    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    pil_img = Image.fromarray(gray_frame)
 
-        # INT8 양자화 모델 추론
-        output = quantized_model(input_tensor)
-        person_prob = torch.sigmoid(output).item() # 사람일 확률
-        no_person_prob = 1.0 - person_prob
+    # 전처리 및 텐서 변환 (배치 차원 추가: [3, 128, 128] -> [1, 3, 128, 128])
+    input_tensor = transform(pil_img).unsqueeze(0).to(device)
 
-        # 판단 기준 (0.5 이상이면 사람)
-        if person_prob >= 0.5:
-            text = f"INT8 Person (Person: {person_prob:.2f}, NoPerson: {no_person_prob:.2f})"
-            color = (0, 255, 0) # 초록색
-        else:
-            text = f"INT8 No Person (Person: {person_prob:.2f}, NoPerson: {no_person_prob:.2f})"
-            color = (0, 0, 255) # 빨간색
+    # 모델 추론
+    with torch.no_grad():
+        output = model(input_tensor).squeeze()
+        # BCEWithLogitsLoss를 썼으므로, 출력값에 Sigmoid를 씌워 0~1 사이의 확률로 변환
+        probability = torch.sigmoid(output).item()
 
-        # 화면에 결과 텍스트 표시
-        cv2.putText(frame, text, (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
-        cv2.imshow("INT8 Quantized CNN Person Detection", frame)
+    # 결과 판별 (0.5 이상이면 Person으로 가정 - 학습 시 라벨링 기준에 따라 다를 수 있음)
+    # Person 라벨이 1.0, Non-Person 라벨이 0.0이었다고 가정한 로직입니다.
+    if probability >= 0.5:
+        label_text = f"Person ({probability*100:.1f}%)"
+        color = (0, 255, 0) # 초록색 텍스트
+    else:
+        label_text = f"Non-Person ({(1-probability)*100:.1f}%)"
+        color = (0, 0, 255) # 빨간색 텍스트
 
-        # 'q' 키를 누르면 종료
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+    # 화면에 결과 텍스트 출력
+    cv2.putText(frame, label_text, (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3)
 
+    # 결과 화면 보여주기
+    cv2.imshow('Person Classifier Test', frame)
+
+    # 'q' 키를 누르면 루프 탈출
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+# 자원 해제
 cap.release()
 cv2.destroyAllWindows()
