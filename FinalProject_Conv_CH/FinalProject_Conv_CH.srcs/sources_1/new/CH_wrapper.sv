@@ -15,6 +15,8 @@ module CH_wrapper #(
 
     // One shared 3x3 pixel window for every CH.
     input  logic       pixel_valid,
+    output logic       pixel_ready,
+    input  logic [1:0] window_index,
     input  logic [7:0] pixel_in [0:8],
 
     // One 3x3 kernel and one bias for each CH.
@@ -24,10 +26,14 @@ module CH_wrapper #(
 
     // One convolution result and valid pulse from each CH.
     output logic signed [7:0]          result_out   [0:NUM_CH-1],
-    output logic [NUM_CH-1:0]          result_valid
+    output logic [NUM_CH-1:0]          result_valid,
+    input  logic [NUM_CH-1:0]          result_ready
 );
 
     genvar ch;
+    logic [NUM_CH-1:0] channel_pixel_ready;
+
+    assign pixel_ready = &channel_pixel_ready;
 
     generate
         for (ch = 0; ch < NUM_CH; ch = ch + 1) begin : GEN_CH
@@ -43,6 +49,8 @@ module CH_wrapper #(
                 .last_ic     (last_ic),
 
                 .pixel_valid (pixel_valid),
+                .pixel_ready (channel_pixel_ready[ch]),
+                .window_index(window_index),
                 .pixel_in    (pixel_in),
 
                 .weight_valid(weight_valid),
@@ -50,7 +58,8 @@ module CH_wrapper #(
                 .bias_in     (bias_in[ch]),
 
                 .result_out  (result_out[ch]),
-                .result_valid(result_valid[ch])
+                .result_valid(result_valid[ch]),
+                .result_ready(result_ready[ch])
             );
         end
     endgenerate

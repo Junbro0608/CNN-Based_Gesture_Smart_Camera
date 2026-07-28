@@ -1,8 +1,23 @@
 Vivado Simulator 2020.2
 Copyright 1986-1999, 2001-2020 Xilinx, Inc. All Rights Reserved.
-Running: C:/Xilinx/Vivado/2020.2/bin/unwrapped/win64.o/xelab.exe -wto 785c2c3caa2c49638479752cdbdb3910 --incr --debug typical --relax --mt 2 -L xil_defaultlib -L uvm -L unisims_ver -L unimacro_ver -L secureip --snapshot tb_CH_behav xil_defaultlib.tb_CH xil_defaultlib.glbl -log elaborate.log 
+Running: C:/Xilinx/Vivado/2020.2/bin/unwrapped/win64.o/xelab.exe -wto 785c2c3caa2c49638479752cdbdb3910 --incr --debug typical --relax --mt 2 -L xil_defaultlib -L uvm -L unisims_ver -L unimacro_ver -L secureip --snapshot tb_CNN_behav xil_defaultlib.tb_CNN xil_defaultlib.glbl -log elaborate.log 
 Using 2 slave threads.
 Starting static elaboration
 Pass Through NonSizing Optimizer
 Completed static elaboration
-INFO: [XSIM 43-4323] No Change in HDL. Linking previously generated obj files to create kernel
+Starting simulation data flow analysis
+Completed simulation data flow analysis
+Time Resolution for simulation is 1ps
+Compiling module xil_defaultlib.Conv_Controller(NUM_CH=2,IMAGE_W...
+Compiling module xil_defaultlib.Weight_Buffer(NUM_CH=2,ADDR_WIDT...
+Compiling module xil_defaultlib.Data_Buffer(DEPTH=36,ADDR_WIDTH=...
+Compiling module xil_defaultlib.Shift_Buffer
+Compiling module xil_defaultlib.CH
+Compiling module xil_defaultlib.CH_wrapper(NUM_CH=2)
+Compiling module xil_defaultlib.MaxPool_2x2
+Compiling module xil_defaultlib.MaxPool_wrapper(NUM_CH=2)
+Compiling module xil_defaultlib.Output_Mux(NUM_CH=2)
+Compiling module xil_defaultlib.CNN(NUM_CH=2,IMAGE_WIDTH=6,IMAGE...
+Compiling module xil_defaultlib.tb_CNN
+Compiling module xil_defaultlib.glbl
+Built simulation snapshot tb_CNN_behav

@@ -16,7 +16,9 @@ module CH #(
 
     // Shift Buffer → CH
     input logic       pixel_valid,
-    input logic [7:0] pixel_in   [0:8],
+    output logic      pixel_ready,
+    input logic [1:0] window_index,
+    input logic [7:0] pixel_in [0:8],
 
     // Weight Buffer → CH
     input logic              weight_valid,
@@ -26,8 +28,9 @@ module CH #(
     // CH → ReLU
     output logic signed [7:0] result_out,
 
-    // CH → ReLU 및 Conv_ctrl
-    output logic result_valid
+    // CH → MaxPool
+    output logic result_valid,
+    input  logic result_ready
 );
 
     // --------------------------------------------------------
@@ -47,8 +50,9 @@ module CH #(
     // 현재 입력 채널 하나의 3×3 합산 결과
     logic signed [31:0] conv_sum;
 
-    // 입력 채널별 Convolution 결과 누적 Register
-    logic signed [31:0] accumulator;
+    // Four independent spatial accumulators for the four convolution windows
+    // that form one 2x2 max-pooling region.
+    logic signed [31:0] accumulator [0:3];
 
     // signed 8-bit Bias를 signed 32-bit로 부호 확장한 값
     logic signed [31:0] bias_extended;
@@ -61,12 +65,21 @@ module CH #(
     logic input_fire;
 
     integer i;
+    integer spatial;
 
     // --------------------------------------------------------
     // 입력 유효 조건
     // --------------------------------------------------------
 
-    assign input_fire = ch_enable && pixel_valid && weight_valid;
+    // Disabled channels do not block the shared Shift Buffer. On the final
+    // input channel, the one-entry result register must be available before
+    // another convolution window can be accepted.
+    assign pixel_ready =
+        !ch_enable
+        || (weight_valid
+            && (!last_ic || !result_valid || result_ready));
+
+    assign input_fire = ch_enable && pixel_valid && pixel_ready;
 
     // --------------------------------------------------------
     // Pixel/Weight 확장, 곱셈 9개 및 3×3 합산
@@ -105,26 +118,33 @@ module CH #(
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             // 비동기 Active-Low Reset
-            accumulator  <= 32'sd0;
             full_result  <= 32'sd0;
             result_out   <= 8'sd0;
             result_valid <= 1'b0;
 
-        end else begin
-            // result_valid는 기본적으로 0
-            // 최종 결과가 완성되는 클록에서만 1
-            result_valid <= 1'b0;
+            for (spatial = 0; spatial < 4; spatial = spatial + 1)
+                accumulator[spatial] <= 32'sd0;
 
+        end else begin
             if (acc_clear) begin
                 // Layer 시작 또는 강제 초기화
                 //
                 // acc_clear와 input_fire가 동시에 1이면
                 // acc_clear가 우선하므로 입력 계산은 수행하지 않음
-                accumulator <= 32'sd0;
                 full_result <= 32'sd0;
                 result_out  <= 8'sd0;
+                result_valid <= 1'b0;
 
-            end else if (input_fire) begin
+                for (spatial = 0; spatial < 4; spatial = spatial + 1)
+                    accumulator[spatial] <= 32'sd0;
+
+            end else begin
+                // Hold result_out/result_valid while the downstream MaxPool
+                // applies backpressure.
+                if (result_valid && result_ready)
+                    result_valid <= 1'b0;
+
+                if (input_fire) begin
 
                 // ------------------------------------------------
                 // 입력 채널이 하나인 경우
@@ -146,7 +166,7 @@ module CH #(
                     result_valid <= 1'b1;
 
                     // 다음 계산을 위해 누적값 초기화
-                    accumulator  <= 32'sd0;
+                    accumulator[window_index] <= 32'sd0;
 
                     // ------------------------------------------------
                     // 여러 입력 채널 중 첫 번째 채널
@@ -157,7 +177,7 @@ module CH #(
                 end else if (first_ic) begin
                     // 이전 누적값을 사용하지 않고
                     // 현재 conv_sum으로 새 누적 시작
-                    accumulator <= conv_sum;
+                    accumulator[window_index] <= conv_sum;
 
                     // ------------------------------------------------
                     // 여러 입력 채널 중 마지막 채널
@@ -167,13 +187,16 @@ module CH #(
                     // ------------------------------------------------
                 end else if (last_ic) begin
                     // 기존 누적값, 현재 conv_sum, Bias를 모두 더함
-                    full_result <= accumulator + conv_sum + bias_extended;
+                    full_result <=
+                        accumulator[window_index]
+                        + conv_sum
+                        + bias_extended;
 
                     // 최종 32-bit 결과를 OUTPUT_SHIFT만큼
                     // 산술 오른쪽 Shift하여 8-bit로 출력
                     result_out <=
                         (
-                            accumulator
+                            accumulator[window_index]
                             + conv_sum
                             + bias_extended
                         ) >>> OUTPUT_SHIFT;
@@ -182,7 +205,7 @@ module CH #(
                     result_valid <= 1'b1;
 
                     // 다음 계산을 위해 누적값 초기화
-                    accumulator <= 32'sd0;
+                    accumulator[window_index] <= 32'sd0;
 
                     // ------------------------------------------------
                     // 여러 입력 채널 중 중간 채널
@@ -192,7 +215,9 @@ module CH #(
                     // ------------------------------------------------
                 end else begin
                     // 기존 누적값에 현재 채널의 3×3 결과 추가
-                    accumulator <= accumulator + conv_sum;
+                    accumulator[window_index] <=
+                        accumulator[window_index] + conv_sum;
+                end
                 end
             end
         end

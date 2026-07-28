@@ -9,32 +9,37 @@ module tb_CH;
     logic first_ic;
     logic last_ic;
     logic pixel_valid;
+    logic pixel_ready;
+    logic [1:0] window_index;
     logic [7:0] pixel_in [0:8];
     logic weight_valid;
     logic signed [7:0] weight_in [0:8];
     logic signed [7:0] bias_in;
     logic signed [7:0] result_out;
     logic result_valid;
+    logic result_ready;
 
-    integer i;
     integer error_count = 0;
 
     CH #(
         .OUTPUT_SHIFT(8)
     ) dut (
-        .clk,
-        .rst_n,
-        .ch_enable,
-        .acc_clear,
-        .first_ic,
-        .last_ic,
-        .pixel_valid,
-        .pixel_in,
-        .weight_valid,
-        .weight_in,
-        .bias_in,
-        .result_out,
-        .result_valid
+        .clk          (clk),
+        .rst_n        (rst_n),
+        .ch_enable    (ch_enable),
+        .acc_clear    (acc_clear),
+        .first_ic     (first_ic),
+        .last_ic      (last_ic),
+        .pixel_valid  (pixel_valid),
+        .pixel_ready  (pixel_ready),
+        .window_index (window_index),
+        .pixel_in     (pixel_in),
+        .weight_valid (weight_valid),
+        .weight_in    (weight_in),
+        .bias_in      (bias_in),
+        .result_out   (result_out),
+        .result_valid (result_valid),
+        .result_ready (result_ready)
     );
 
     always #5 clk = ~clk;
@@ -52,23 +57,26 @@ module tb_CH;
         end
     endtask
 
-    task automatic drive_channel(
-        input logic first_value,
-        input logic last_value,
-        input logic pixel_valid_value,
-        input logic weight_valid_value,
+    task automatic drive_window(
+        input logic [1:0] index_value,
+        input logic       first_value,
+        input logic       last_value,
+        input logic       pixel_valid_value,
+        input logic       weight_valid_value,
         input logic [7:0] pixel_value,
         input logic signed [7:0] weight_value,
         input logic signed [7:0] bias_value
     );
         begin
             @(negedge clk);
+            window_index = index_value;
             first_ic     = first_value;
             last_ic      = last_value;
             pixel_valid  = pixel_valid_value;
             weight_valid = weight_valid_value;
             bias_in      = bias_value;
             set_vectors(pixel_value, weight_value);
+
             @(posedge clk);
             #1;
         end
@@ -95,14 +103,16 @@ module tb_CH;
     endtask
 
     initial begin
-        rst_n       = 1'b0;
-        ch_enable   = 1'b0;
-        acc_clear   = 1'b0;
-        first_ic    = 1'b0;
-        last_ic     = 1'b0;
-        pixel_valid = 1'b0;
+        rst_n        = 1'b0;
+        result_ready = 1'b1;
+        ch_enable    = 1'b0;
+        acc_clear    = 1'b0;
+        first_ic     = 1'b0;
+        last_ic      = 1'b0;
+        pixel_valid  = 1'b0;
+        window_index = 2'd0;
         weight_valid = 1'b0;
-        bias_in     = 8'sd0;
+        bias_in      = 8'sd0;
         set_vectors(8'd0, 8'sd0);
 
         repeat (2) @(posedge clk);
@@ -112,56 +122,179 @@ module tb_CH;
         rst_n     = 1'b1;
         ch_enable = 1'b1;
 
+        // A one-input-channel layer still produces one result per window.
         // 9*(16*2)+8 = 296, 296 >>> 8 = 1.
-        drive_channel(1, 1, 1, 1, 8'd16, 8'sd2, 8'sd8);
-        expect_result(1'b1, 8'sd1, "single input channel");
+        drive_window(
+            2'd0, 1'b1, 1'b1, 1'b1, 1'b1,
+            8'd16, 8'sd2, 8'sd8
+        );
+        expect_result(1'b1, 8'sd1, "single channel window 0");
 
-        // result_valid must return to zero on the following idle cycle.
-        drive_channel(0, 0, 0, 0, 8'd0, 8'sd0, 8'sd0);
+        // result_valid is a pulse.
+        drive_window(
+            2'd0, 1'b0, 1'b0, 1'b0, 1'b0,
+            8'd0, 8'sd0, 8'sd0
+        );
         expect_result(1'b0, 8'sd0, "valid pulse");
 
-        // 9*(255*-1) = -2295, arithmetic -2295 >>> 8 = -9.
-        drive_channel(1, 1, 1, 1, 8'd255, -8'sd1, 8'sd0);
-        expect_result(1'b1, -8'sd9, "unsigned pixel and negative weight");
+        // Signed negative result:
+        // 9*(255*-1) = -2295, -2295 >>> 8 = -9.
+        drive_window(
+            2'd3, 1'b1, 1'b1, 1'b1, 1'b1,
+            8'd255, -8'sd1, 8'sd0
+        );
+        expect_result(1'b1, -8'sd9, "signed negative window 3");
 
-        // Three-channel accumulation:
-        // ic0=9*(16*1)=144
-        // ic1=9*(8*2)=144
-        // ic2=9*(4*-1)=-36, bias=4
-        // total=256, 256 >>> 8 = 1.
-        drive_channel(1, 0, 1, 1, 8'd16, 8'sd1, 8'sd0);
-        expect_result(1'b0, 8'sd0, "multi-channel first");
+        // Three input channels and four independent spatial positions.
+        //
+        // IC0, weight=1:
+        //   windows 0..3 conv sums = 144, 288, 432, 576
+        drive_window(
+            2'd0, 1'b1, 1'b0, 1'b1, 1'b1,
+            8'd16, 8'sd1, 8'sd0
+        );
+        expect_result(1'b0, 8'sd0, "IC0 window 0");
 
-        drive_channel(0, 0, 1, 1, 8'd8, 8'sd2, 8'sd0);
-        expect_result(1'b0, 8'sd0, "multi-channel middle");
+        drive_window(
+            2'd1, 1'b1, 1'b0, 1'b1, 1'b1,
+            8'd32, 8'sd1, 8'sd0
+        );
+        expect_result(1'b0, 8'sd0, "IC0 window 1");
 
-        // Invalid Weight must not change the accumulated value.
-        drive_channel(0, 0, 1, 0, 8'd100, 8'sd100, 8'sd0);
+        drive_window(
+            2'd2, 1'b1, 1'b0, 1'b1, 1'b1,
+            8'd48, 8'sd1, 8'sd0
+        );
+        expect_result(1'b0, 8'sd0, "IC0 window 2");
+
+        drive_window(
+            2'd3, 1'b1, 1'b0, 1'b1, 1'b1,
+            8'd64, 8'sd1, 8'sd0
+        );
+        expect_result(1'b0, 8'sd0, "IC0 window 3");
+
+        // IC1, weight=2, adds the same amount to each spatial accumulator.
+        drive_window(
+            2'd0, 1'b0, 1'b0, 1'b1, 1'b1,
+            8'd8, 8'sd2, 8'sd0
+        );
+        expect_result(1'b0, 8'sd0, "IC1 window 0");
+
+        drive_window(
+            2'd1, 1'b0, 1'b0, 1'b1, 1'b1,
+            8'd16, 8'sd2, 8'sd0
+        );
+        expect_result(1'b0, 8'sd0, "IC1 window 1");
+
+        drive_window(
+            2'd2, 1'b0, 1'b0, 1'b1, 1'b1,
+            8'd24, 8'sd2, 8'sd0
+        );
+        expect_result(1'b0, 8'sd0, "IC1 window 2");
+
+        drive_window(
+            2'd3, 1'b0, 1'b0, 1'b1, 1'b1,
+            8'd32, 8'sd2, 8'sd0
+        );
+        expect_result(1'b0, 8'sd0, "IC1 window 3");
+
+        // Invalid data must not alter any spatial accumulator.
+        drive_window(
+            2'd2, 1'b0, 1'b0, 1'b1, 1'b0,
+            8'd100, 8'sd100, 8'sd0
+        );
         expect_result(1'b0, 8'sd0, "weight_valid gating");
 
-        drive_channel(0, 1, 1, 1, 8'd4, -8'sd1, 8'sd4);
-        expect_result(1'b1, 8'sd1, "multi-channel last");
+        // IC2 is the final channel. Bias=4 is applied independently to all
+        // four positions. Expected shifted results are 1, 1, 2, 3.
+        drive_window(
+            2'd0, 1'b0, 1'b1, 1'b1, 1'b1,
+            8'd4, -8'sd1, 8'sd4
+        );
+        expect_result(1'b1, 8'sd1, "IC2 final window 0");
 
-        // Clear has priority and prevents a simultaneous transaction.
+        drive_window(
+            2'd1, 1'b0, 1'b1, 1'b1, 1'b1,
+            8'd8, -8'sd1, 8'sd4
+        );
+        expect_result(1'b1, 8'sd1, "IC2 final window 1");
+
+        drive_window(
+            2'd2, 1'b0, 1'b1, 1'b1, 1'b1,
+            8'd12, -8'sd1, 8'sd4
+        );
+        expect_result(1'b1, 8'sd2, "IC2 final window 2");
+
+        drive_window(
+            2'd3, 1'b0, 1'b1, 1'b1, 1'b1,
+            8'd16, -8'sd1, 8'sd4
+        );
+        expect_result(1'b1, 8'sd3, "IC2 final window 3");
+
+        // Hold the completed result while MaxPool applies backpressure.
+        @(negedge clk);
+        result_ready = 1'b0;
+        pixel_valid  = 1'b1;
+        first_ic     = 1'b1;
+        last_ic      = 1'b1;
+        window_index = 2'd0;
+        set_vectors(8'd100, 8'sd100);
+
+        repeat (2) begin
+            @(posedge clk);
+            #1;
+
+            if ((pixel_ready !== 1'b0)
+                || (result_valid !== 1'b1)
+                || (result_out !== 8'sd3)) begin
+                $error("Result backpressure did not hold CH output");
+                error_count = error_count + 1;
+            end
+        end
+
+        @(negedge clk);
+        pixel_valid  = 1'b0;
+        result_ready = 1'b1;
+
+        @(posedge clk);
+        #1;
+
+        if (result_valid !== 1'b0) begin
+            $error("Result handshake did not release CH output");
+            error_count = error_count + 1;
+        end
+
+        // Clear has priority and clears all four spatial accumulators.
         @(negedge clk);
         acc_clear    = 1'b1;
         first_ic     = 1'b1;
         last_ic      = 1'b1;
         pixel_valid  = 1'b1;
         weight_valid = 1'b1;
+        window_index = 2'd2;
         bias_in      = 8'sd0;
         set_vectors(8'd16, 8'sd2);
+
         @(posedge clk);
         #1;
         expect_result(1'b0, 8'sd0, "acc_clear priority");
-        acc_clear = 1'b0;
+
+        @(negedge clk);
+        acc_clear    = 1'b0;
+        pixel_valid  = 1'b0;
+        weight_valid = 1'b0;
 
         if (error_count == 0)
-            $display("PASS: all CH tests passed");
+            $display("PASS: all four-accumulator CH tests passed");
         else
             $fatal(1, "FAIL: %0d CH test(s) failed", error_count);
 
         $finish;
+    end
+
+    initial begin
+        #5000;
+        $fatal(1, "FAIL: CH test timed out");
     end
 
 endmodule
