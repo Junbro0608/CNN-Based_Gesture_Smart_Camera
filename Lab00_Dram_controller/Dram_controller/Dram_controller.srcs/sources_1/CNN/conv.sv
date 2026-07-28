@@ -15,12 +15,12 @@ module conv #(
     output logic                               Done,
     //weight side
     output logic [  $clog2(WT_ADDR_WIDTH)-1:0] wt_raddr,
-    output logic [          WT_DATA_WIDTH-1:0] wt_rdata,
-    //Data Load
+    input  logic [          WT_DATA_WIDTH-1:0] wt_rdata,
+    //Data Store
     output logic                               DATA_we,
     output logic [$clog2(DATA_ADDR_WIDTH)-1:0] DATA_waddr,
-    input  logic [        DATA_DATA_WIDTH-1:0] DATA_wdata,
-    //Data Store
+    output logic [        DATA_DATA_WIDTH-1:0] DATA_wdata,
+    //Data Load
     output logic [$clog2(DATA_ADDR_WIDTH)-1:0] DATA_raddr,
     input  logic [        DATA_DATA_WIDTH-1:0] DATA_rdata
 );
