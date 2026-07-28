@@ -1,15 +1,21 @@
 `timescale 1ns / 1ps
 
-// Three-layer convolution accelerator:
-//   Layer 0 : 1  -> 32 channels
-//   Layer 1 : 32 -> 64 channels
-//   Layer 2 : 64 -> 128 channels
+// Configurable one-to-three-layer convolution accelerator.
+//
+// The input channel count of Layer 0 is one. Each later layer receives the
+// output channels of the preceding layer. For example:
+//   NUM_LAYERS=1: 1 -> 8
+//   NUM_LAYERS=2: 1 -> 16 -> 32
+//   NUM_LAYERS=3: 1 -> 32 -> 64 -> 128
 //
 // One physical NUM_CH-wide datapath is reused across output-channel groups.
-// With NUM_CH=8, the three layers execute 4, 8 and 16 groups respectively.
+// Every active output-channel count must therefore be a multiple of NUM_CH.
 module CNN #(
     parameter integer NUM_CH            = 8,
-    parameter integer BASE_OUTPUT_CHANNELS = 32,
+    parameter integer NUM_LAYERS         = 3,
+    parameter integer LAYER0_OUTPUT_CHANNELS = 32,
+    parameter integer LAYER1_OUTPUT_CHANNELS = 64,
+    parameter integer LAYER2_OUTPUT_CHANNELS = 128,
     parameter integer IMAGE_WIDTH       = 128,
     parameter integer IMAGE_HEIGHT      = 128,
     parameter integer DATA_ADDR_WIDTH   = 32,
@@ -83,7 +89,7 @@ module CNN #(
 
     // Visible in the integration waveform.
     logic [1:0] layer_index;
-    logic [4:0] output_group_index;
+    logic [CONFIG_WIDTH-1:0] output_group_index;
 
     logic conv_start;
     logic conv_done;
@@ -160,10 +166,19 @@ module CNN #(
     initial begin
         if ((NUM_CH <= 0)
             || (BUFFER_DATA_WIDTH < 8)
-            || (((BASE_OUTPUT_CHANNELS << 0) % NUM_CH) != 0)
-            || (((BASE_OUTPUT_CHANNELS << 1) % NUM_CH) != 0)
-            || (((BASE_OUTPUT_CHANNELS << 2) % NUM_CH) != 0)) begin
-            $error("BUFFER_DATA_WIDTH must be >=8 and NUM_CH must divide every output-channel count");
+            || (NUM_LAYERS < 1)
+            || (NUM_LAYERS > 3)
+            || (LAYER0_OUTPUT_CHANNELS <= 0)
+            || ((LAYER0_OUTPUT_CHANNELS % NUM_CH) != 0)
+            || ((NUM_LAYERS >= 2)
+                && ((LAYER1_OUTPUT_CHANNELS <= 0)
+                    || ((LAYER1_OUTPUT_CHANNELS % NUM_CH) != 0)))
+            || ((NUM_LAYERS >= 3)
+                && ((LAYER2_OUTPUT_CHANNELS <= 0)
+                    || ((LAYER2_OUTPUT_CHANNELS % NUM_CH) != 0)))) begin
+            $error(
+                "NUM_LAYERS must be 1..3, BUFFER_DATA_WIDTH must be >=8, and NUM_CH must divide every active output-channel count"
+            );
         end
     end
 
@@ -192,14 +207,9 @@ module CNN #(
         cfg_source_bank        = 1'b0;
         cfg_image_width        = IMAGE_WIDTH;
         cfg_image_height       = IMAGE_HEIGHT;
-        cfg_input_channels     =
-            (layer_index == 0)
-                ? 16'd1
-                : (BASE_OUTPUT_CHANNELS << (layer_index-1));
-        cfg_output_channels    =
-            BASE_OUTPUT_CHANNELS << layer_index;
-        cfg_output_groups      =
-            (BASE_OUTPUT_CHANNELS << layer_index) / NUM_CH;
+        cfg_input_channels     = 16'd1;
+        cfg_output_channels    = LAYER0_OUTPUT_CHANNELS;
+        cfg_output_groups      = LAYER0_OUTPUT_CHANNELS / NUM_CH;
         cfg_output_channel_base =
             output_group_index * NUM_CH;
         cfg_layer_weight_base = WEIGHT_BASE_LAYER0;
@@ -220,6 +230,10 @@ module CNN #(
                 cfg_source_bank     = 1'b1;
                 cfg_image_width     = LAYER1_WIDTH;
                 cfg_image_height    = LAYER1_HEIGHT;
+                cfg_input_channels  = LAYER0_OUTPUT_CHANNELS;
+                cfg_output_channels = LAYER1_OUTPUT_CHANNELS;
+                cfg_output_groups   =
+                    LAYER1_OUTPUT_CHANNELS / NUM_CH;
                 cfg_layer_weight_base = WEIGHT_BASE_LAYER1;
                 cfg_MaxPool_en      = LAYER1_MAXPOOL_EN;
                 cfg_Relu_en         = LAYER1_RELU_EN;
@@ -229,6 +243,10 @@ module CNN #(
                 cfg_source_bank     = 1'b0;
                 cfg_image_width     = LAYER2_WIDTH;
                 cfg_image_height    = LAYER2_HEIGHT;
+                cfg_input_channels  = LAYER1_OUTPUT_CHANNELS;
+                cfg_output_channels = LAYER2_OUTPUT_CHANNELS;
+                cfg_output_groups   =
+                    LAYER2_OUTPUT_CHANNELS / NUM_CH;
                 cfg_layer_weight_base = WEIGHT_BASE_LAYER2;
                 cfg_MaxPool_en      = LAYER2_MAXPOOL_EN;
                 cfg_Relu_en         = LAYER2_RELU_EN;
@@ -242,12 +260,12 @@ module CNN #(
     end
 
     // The external ping-pong buffer must contain the input image before start.
-    // Execute all output groups of all three layers after start.
+    // Execute all output groups of every configured layer after start.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             cnn_state           <= CNN_IDLE;
             layer_index         <= 2'd0;
-            output_group_index  <= 5'd0;
+            output_group_index  <= '0;
             conv_start          <= 1'b0;
             done                <= 1'b0;
         end else begin
@@ -258,7 +276,7 @@ module CNN #(
                 CNN_IDLE: begin
                     if (start) begin
                         layer_index         <= 2'd0;
-                        output_group_index  <= 5'd0;
+                        output_group_index  <= '0;
                         cnn_state           <= START_GROUP;
                     end
                 end
@@ -272,9 +290,9 @@ module CNN #(
                     if (conv_done) begin
                         if (output_group_index
                             == cfg_output_groups-1) begin
-                            output_group_index <= 5'd0;
+                            output_group_index <= '0;
 
-                            if (layer_index == 2) begin
+                            if (layer_index == NUM_LAYERS-1) begin
                                 cnn_state <= CNN_IDLE;
                                 done      <= 1'b1;
                             end else begin

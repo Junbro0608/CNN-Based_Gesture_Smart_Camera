@@ -5,13 +5,33 @@ Zynq FPGA에서 CNN의 Convolution 연산을 가속하기 위한 RTL 프로젝�
 
 ## 1. 전체 CNN 구성
 
-- 채널 구성: `1 → 32 → 64 → 128`
+- Layer 수와 출력 채널 수를 파라미터로 설정 가능
 - 하나의 Convolution Engine을 Layer별로 순차 재사용
 - CH 연산기 8개를 병렬 배치
 - 한 번에 출력 채널 8개 계산
 - CH 8개는 동일한 `3×3 Pixel Window` 공유
 - 각 CH는 서로 다른 Weight와 Bias 사용
 - Weight Buffer와 Data Buffer는 각각 Mem A/Mem B를 사용하는 Ping-pong 구조
+
+현재 `CNN.sv`는 1~3개 Layer를 지원하며 각 Layer의 출력 채널 수를 독립적으로 지정한다.
+
+```systemverilog
+parameter integer NUM_LAYERS = 3;
+parameter integer LAYER0_OUTPUT_CHANNELS = 32;
+parameter integer LAYER1_OUTPUT_CHANNELS = 64;
+parameter integer LAYER2_OUTPUT_CHANNELS = 128;
+```
+
+예시:
+
+| 원하는 구성 | 파라미터 |
+|---|---|
+| `1 → 8` | `NUM_LAYERS=1`, `LAYER0_OUTPUT_CHANNELS=8` |
+| `1 → 16 → 32` | `NUM_LAYERS=2`, `LAYER0_OUTPUT_CHANNELS=16`, `LAYER1_OUTPUT_CHANNELS=32` |
+| `1 → 32 → 64 → 128` | `NUM_LAYERS=3`, 출력 채널을 각각 `32`, `64`, `128`로 설정 |
+| `1 → 16 → 64` | `NUM_LAYERS=2`, 출력 채널을 각각 `16`, `64`로 설정 |
+
+Layer 0의 입력 채널은 1이고, 이후 Layer의 입력 채널은 바로 앞 Layer의 출력 채널로 자동 설정된다. 현재 물리 연산기가 `NUM_CH=8`개이므로 활성화된 각 Layer의 출력 채널 수는 8의 배수여야 한다.
 
 개념적인 데이터 흐름은 다음과 같다.
 
@@ -534,6 +554,8 @@ Self-checking Testbench를 이용해 다음 항목을 검증했다.
 - 음수 MaxPool 결과와 ReLU 처리
 - Controller의 Pool/Bypass 경로
 - `1 → 32 → 64 → 128` 3-Layer CNN 통합 동작
+- `1 → 8` 1-Layer 스케줄 및 종료 시점
+- `1 → 16 → 32` 2-Layer 채널·그룹 스케줄 및 종료 시점
 
 결과:
 
@@ -542,6 +564,7 @@ PASS: all CH tests passed
 PASS: CH_Result_Buffer bypass/pool/ReLU tests passed
 PASS: pooled and bypass Conv_Controller tests passed
 PASS: 1->32->64->128 with L2 MaxPool bypass golden comparison
+PASS: configurable 1->8 and 1->16->32 schedules
 ```
 
 통합 Testbench의 기본 처리 구성:
@@ -583,6 +606,9 @@ tb_Conv_Controller.sv
 
 tb_CNN.sv
     3-Layer 전체 CNN Golden 비교 Testbench
+
+tb_CNN_Config.sv
+    1-Layer/2-Layer 가변 채널 스케줄 Self-checking Testbench
 ```
 
 기존 `Data_Buffer.sv`, `Weight_Buffer.sv`, `Output_Mux.sv`, `MaxPool_wrapper.sv`는 삭제하지 않고 참고용으로 보존한다.
@@ -591,6 +617,6 @@ tb_CNN.sv
 
 1. 외부 64-bit Weight Ping-pong Buffer의 실제 포트와 CNN Weight 요청 포트 최종 통합
 2. 전체 CNN Accelerator 및 FC 블록 연결
-3. Layer별 채널 수와 MaxPool/ReLU 설정 조합 추가 검증
+3. Layer별 MaxPool/ReLU 설정 조합 추가 검증
 4. Vivado 합성·구현 후 DSP/BRAM 사용량과 125 MHz Timing 분석
 5. 실제 보드에서 DRAM 데이터 이동과 Bank 전환 검증

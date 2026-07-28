@@ -5,10 +5,9 @@
 module tb_CNN;
 
     localparam integer NUM_CH           = 8;
-    localparam integer BASE_CHANNELS    = 32;
-    localparam integer L0_CHANNELS      = BASE_CHANNELS << 0;
-    localparam integer L1_CHANNELS      = BASE_CHANNELS << 1;
-    localparam integer L2_CHANNELS      = BASE_CHANNELS << 2;
+    localparam integer L0_CHANNELS      = 32;
+    localparam integer L1_CHANNELS      = 64;
+    localparam integer L2_CHANNELS      = 128;
     localparam integer IMAGE_WIDTH      = 32;
     localparam integer IMAGE_HEIGHT     = 32;
     localparam integer IMAGE_PIXELS     = IMAGE_WIDTH*IMAGE_HEIGHT;
@@ -115,7 +114,10 @@ module tb_CNN;
 
     CNN #(
         .NUM_CH            (NUM_CH),
-        .BASE_OUTPUT_CHANNELS(BASE_CHANNELS),
+        .NUM_LAYERS         (3),
+        .LAYER0_OUTPUT_CHANNELS(L0_CHANNELS),
+        .LAYER1_OUTPUT_CHANNELS(L1_CHANNELS),
+        .LAYER2_OUTPUT_CHANNELS(L2_CHANNELS),
         .IMAGE_WIDTH       (IMAGE_WIDTH),
         .IMAGE_HEIGHT      (IMAGE_HEIGHT),
         .DATA_ADDR_WIDTH   (ADDR_WIDTH),
@@ -183,12 +185,12 @@ module tb_CNN;
         begin
             case (layer_number)
                 0: bias_value =
-                    output_channel - (BASE_CHANNELS >> 1);
+                    output_channel - (L0_CHANNELS >> 1);
                 1: bias_value =
-                    output_channel - (BASE_CHANNELS << 0);
+                    output_channel - (L1_CHANNELS >> 1);
                 default:
                     bias_value =
-                        output_channel - (BASE_CHANNELS << 1);
+                        output_channel - (L2_CHANNELS >> 1);
             endcase
         end
     endfunction
