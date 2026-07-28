@@ -10,6 +10,7 @@ module fc #(
     input  logic                               start,
     input  logic [            $clog2(128)-1:0] input_length,
     input  logic [            $clog2(128)-1:0] output_length,
+    output logic                               finish_en,
     output logic                               Done,
     //weight side
     output logic [  $clog2(WT_ADDR_WIDTH)-1:0] wt_raddr,
