@@ -10,7 +10,7 @@ device = torch.device('cpu')
 model = PersonClassifierCNN().to(device)
 
 # FP32로 학습된 가중치 파일 로드
-model.load_state_dict(torch.load('person_classifier.pth', map_location=device))
+model.load_state_dict(torch.load('person_classifier_best_acc.pth', map_location=device))
 model.eval()
 
 print("FP32 모델 로드 완료. INT8 양자화(Dynamic Quantization) 적용 중...")
@@ -27,8 +27,10 @@ print("INT8 양자화 완료!")
 # 4. 이미지 전처리 파이프라인
 transform = transforms.Compose([
     transforms.ToPILImage(),
-    transforms.Resize((128, 128)),
+    transforms.Grayscale(num_output_channels=1),
+    transforms.Resize((156, 156)),
     transforms.ToTensor(),
+    transforms.Normalize(mean=[0.5], std=[0.5]),
 ])
 
 # 5. 웹캠 열기
@@ -47,20 +49,20 @@ with torch.no_grad():
             print("프레임을 읽지 못했습니다.")
             break
 
-        # OpenCV BGR -> RGB 변환 후 전처리
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        input_tensor = transform(rgb_frame).unsqueeze(0) # 배치 차원 추가
+        # 학습과 동일하게 1채널로 전처리
+        input_tensor = transform(frame).unsqueeze(0) # 배치 차원 추가
 
         # INT8 양자화 모델 추론
         output = quantized_model(input_tensor)
-        prob = output.item() # 0~1 사이의 확률값
+        person_prob = torch.sigmoid(output).item() # 사람일 확률
+        no_person_prob = 1.0 - person_prob
 
         # 판단 기준 (0.5 이상이면 사람)
-        if prob >= 0.5:
-            text = f"INT8 Person (Prob: {prob:.2f})"
+        if person_prob >= 0.5:
+            text = f"INT8 Person (Person: {person_prob:.2f}, NoPerson: {no_person_prob:.2f})"
             color = (0, 255, 0) # 초록색
         else:
-            text = f"INT8 No Person (Prob: {1-prob:.2f})"
+            text = f"INT8 No Person (Person: {person_prob:.2f}, NoPerson: {no_person_prob:.2f})"
             color = (0, 0, 255) # 빨간색
 
         # 화면에 결과 텍스트 표시
