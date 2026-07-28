@@ -40,7 +40,7 @@ module CNN_accelerator #(
         .fc_output_length  (fc_output_length),
         .fc_Done           (fc_Done),
         //Datamem_ctrl
-        .DATA_w_sel      (DATA_w_sel),
+        .DATA_w_sel      (Data_mem_sel),
         .mux_sel           (mux_sel),
         .DataMover_start   (DataMover_start),
         //outside

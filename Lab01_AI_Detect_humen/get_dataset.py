@@ -8,11 +8,11 @@ import fiftyone as fo
 import fiftyone.zoo as foz
 
 RANDOM_SEED = 42
-MIN_FACE_AREA_RATIO = 0.018
-MIN_FACE_WIDTH = 36
-MIN_FACE_HEIGHT = 36
-FACE_MIN_NEIGHBORS = 6
-EYE_MIN_NEIGHBORS = 4
+MIN_FACE_AREA_RATIO = 0.03
+MIN_FACE_WIDTH = 48
+MIN_FACE_HEIGHT = 48
+FACE_MIN_NEIGHBORS = 8
+EYE_MIN_NEIGHBORS = 5
 MIN_WEAK_FACE_AREA_RATIO = 0.006
 MIN_WEAK_FACE_WIDTH = 24
 MIN_WEAK_FACE_HEIGHT = 24
@@ -20,10 +20,10 @@ WEAK_FACE_MIN_NEIGHBORS = 4
 USE_EXTERNAL_FACE_DATASET = True
 EXTERNAL_FACE_DATASET_NAME = "widerface"
 EXTERNAL_FACE_BUFFER_MULTIPLIER = 3
-USE_COCO_PERSON_FALLBACK = True
+USE_COCO_PERSON_FALLBACK = False
 COCO_DATASETS = ["coco-2014", "coco-2017"]
 # 출력 데이터셋 클래스별 목표 장수
-TRAIN_TARGET_PER_CLASS = 500
+TRAIN_TARGET_PER_CLASS = 400
 VAL_TARGET_PER_CLASS = 100
 # non_person으로 사용할 권장 COCO 카테고리 목록
 NON_PERSON_CATEGORY_LABELS = [
@@ -88,17 +88,8 @@ def has_visible_face(image_path, min_face_area_ratio):
         if (width * height) / image_area < min_face_area_ratio:
             continue
 
-        face_roi_gray = gray[y:y + height, x:x + width]
-        eyes = EYE_CASCADE.detectMultiScale(
-            face_roi_gray,
-            scaleFactor=1.1,
-            minNeighbors=EYE_MIN_NEIGHBORS,
-            minSize=(10, 10),
-        )
-
-        # 조건을 약간 완화해 눈 1개 이상 검출되면 person 판정에 사용합니다.
-        if len(eyes) >= 1:
-            return True
+        # 얼굴 박스가 충분히 크면 person으로 인정합니다.
+        return True
 
     return False
 
@@ -285,7 +276,6 @@ def download_and_export_split(
     os.makedirs(non_person_dir, exist_ok=True)
 
     person_filepaths = []
-    person_fallback_filepaths = []
     non_person_filepaths = []
     person_label_without_face_count = 0
     skipped_without_non_person_category_count = 0
@@ -311,9 +301,6 @@ def download_and_export_split(
             if person_label_exists and visible_face_exists:
                 person_filepaths.append(sample.filepath)
             else:
-                if person_label_exists:
-                    person_fallback_filepaths.append(sample.filepath)
-
                 # non_person 조건: person 라벨이 없고, non_person 카테고리 라벨이 있어야 함
                 if (not person_label_exists) and non_person_category_exists:
                     non_person_filepaths.append(sample.filepath)
@@ -331,28 +318,6 @@ def download_and_export_split(
         external_person_filepaths = collect_external_face_filepaths(split_name, needed_count)
         person_filepaths.extend(external_person_filepaths)
         person_count = len(person_filepaths)
-
-    if USE_COCO_PERSON_FALLBACK and person_count < desired_per_class:
-        needed_count = desired_per_class - person_count
-        rng_fallback = random.Random(RANDOM_SEED + 1)
-        rng_fallback.shuffle(person_fallback_filepaths)
-
-        person_seen = set(person_filepaths)
-        added_by_fallback = 0
-        for filepath in person_fallback_filepaths:
-            if filepath in person_seen:
-                continue
-            person_filepaths.append(filepath)
-            person_seen.add(filepath)
-            added_by_fallback += 1
-            if added_by_fallback >= needed_count:
-                break
-
-        person_count = len(person_filepaths)
-        print(
-            f"{split_name}: COCO person fallback 사용 {added_by_fallback}장 "
-            f"(현재 person {person_count}장)"
-        )
 
     if person_count < desired_per_class or non_person_count < desired_per_class:
         raise RuntimeError(
