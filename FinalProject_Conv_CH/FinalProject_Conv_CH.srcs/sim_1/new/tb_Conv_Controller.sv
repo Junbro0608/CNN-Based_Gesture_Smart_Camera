@@ -9,11 +9,8 @@ module tb_Conv_Controller;
     localparam integer ADDR_WIDTH         = 16;
 
     localparam integer CH_SELECT_WIDTH = $clog2(NUM_CH);
-    localparam integer IC_WIDTH        = $clog2(NUM_INPUT_CHANNELS);
     localparam integer POOL_WIDTH      = (IMAGE_WIDTH-2)/2;
     localparam integer POOL_HEIGHT     = (IMAGE_HEIGHT-2)/2;
-    localparam integer POOL_X_WIDTH    = $clog2(POOL_WIDTH);
-    localparam integer POOL_Y_WIDTH    = $clog2(POOL_HEIGHT);
     localparam integer POOL_PIXELS     = POOL_WIDTH*POOL_HEIGHT;
 
     localparam logic [ADDR_WIDTH-1:0] WEIGHT_BASE = 16'h1000;
@@ -22,6 +19,10 @@ module tb_Conv_Controller;
     logic rst_n;
     logic start;
     logic source_bank;
+    logic [15:0] cfg_image_width;
+    logic [15:0] cfg_image_height;
+    logic [15:0] cfg_input_channels;
+    logic [15:0] cfg_output_channel_base;
     logic [ADDR_WIDTH-1:0] weight_base_addr;
     logic busy;
     logic done;
@@ -58,9 +59,9 @@ module tb_Conv_Controller;
     logic data_write_bank;
     logic [ADDR_WIDTH-1:0] data_write_addr;
 
-    logic [IC_WIDTH-1:0] input_channel_index;
-    logic [POOL_X_WIDTH-1:0] pool_x_index;
-    logic [POOL_Y_WIDTH-1:0] pool_y_index;
+    logic [15:0] input_channel_index;
+    logic [15:0] pool_x_index;
+    logic [15:0] pool_y_index;
 
     integer error_count = 0;
     integer weight_delay;
@@ -76,16 +77,18 @@ module tb_Conv_Controller;
     integer handshake_cycle;
 
     Conv_Controller #(
-        .NUM_CH            (NUM_CH),
-        .NUM_INPUT_CHANNELS(NUM_INPUT_CHANNELS),
-        .IMAGE_WIDTH       (IMAGE_WIDTH),
-        .IMAGE_HEIGHT      (IMAGE_HEIGHT),
-        .ADDR_WIDTH        (ADDR_WIDTH)
+        .NUM_CH      (NUM_CH),
+        .ADDR_WIDTH  (ADDR_WIDTH),
+        .CONFIG_WIDTH(16)
     ) dut (
         .clk                (clk),
         .rst_n              (rst_n),
         .start              (start),
         .source_bank        (source_bank),
+        .cfg_image_width    (cfg_image_width),
+        .cfg_image_height   (cfg_image_height),
+        .cfg_input_channels (cfg_input_channels),
+        .cfg_output_channel_base(cfg_output_channel_base),
         .weight_base_addr   (weight_base_addr),
         .busy               (busy),
         .done               (done),
@@ -301,6 +304,10 @@ module tb_Conv_Controller;
         rst_n             = 1'b0;
         start             = 1'b0;
         source_bank       = 1'b0;
+        cfg_image_width   = IMAGE_WIDTH;
+        cfg_image_height  = IMAGE_HEIGHT;
+        cfg_input_channels = NUM_INPUT_CHANNELS;
+        cfg_output_channel_base = 0;
         weight_base_addr  = WEIGHT_BASE;
         weight_load_count = 0;
         total_read_count  = 0;

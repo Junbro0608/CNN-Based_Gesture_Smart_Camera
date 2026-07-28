@@ -1,19 +1,26 @@
 `timescale 1ns / 1ps
 
-// One integrated valid-3x3-convolution + 2x2-max-pooling accelerator.
+// Three-layer convolution accelerator:
+//   Layer 0 : 1  -> 32 channels
+//   Layer 1 : 32 -> 64 channels
+//   Layer 2 : 64 -> 128 channels
 //
-// External control only needs start/done/busy. After start, this module first
-// copies one complete image from the external ping-pong buffer into internal
-// Data_Buffer bank 0, then starts Conv_Controller automatically.
+// One physical NUM_CH-wide datapath is reused across output-channel groups.
+// With NUM_CH=8, the three layers execute 4, 8 and 16 groups respectively.
 module CNN #(
-    parameter integer NUM_CH             = 8,
-    parameter integer NUM_INPUT_CHANNELS = 1,
-    parameter integer IMAGE_WIDTH        = 128,
-    parameter integer IMAGE_HEIGHT       = 128,
-    parameter integer DATA_ADDR_WIDTH    = 32,
-    parameter integer WEIGHT_ADDR_WIDTH  = 32,
-    parameter logic [WEIGHT_ADDR_WIDTH-1:0] WEIGHT_BASE_ADDR =
+    parameter integer NUM_CH            = 8,
+    parameter integer BASE_OUTPUT_CHANNELS = 32,
+    parameter integer IMAGE_WIDTH       = 128,
+    parameter integer IMAGE_HEIGHT      = 128,
+    parameter integer DATA_ADDR_WIDTH   = 32,
+    parameter integer WEIGHT_ADDR_WIDTH = 32,
+
+    parameter logic [WEIGHT_ADDR_WIDTH-1:0] WEIGHT_BASE_LAYER0 =
         32'h1000_0000,
+    parameter logic [WEIGHT_ADDR_WIDTH-1:0] WEIGHT_BASE_LAYER1 =
+        32'h1100_0000,
+    parameter logic [WEIGHT_ADDR_WIDTH-1:0] WEIGHT_BASE_LAYER2 =
+        32'h1200_0000,
 
     parameter integer IMAGE_ADDR_WIDTH =
         ((IMAGE_WIDTH*IMAGE_HEIGHT) <= 1)
@@ -27,7 +34,7 @@ module CNN #(
     output logic done,
     output logic busy,
 
-    // External ping-pong buffer read interface.
+    // External ping-pong buffer, used only for the first 1-channel image.
     output logic                        img_read_enable,
     output logic [IMAGE_ADDR_WIDTH-1:0] img_read_addr,
     input  logic [7:0]                  img_data,
@@ -39,51 +46,74 @@ module CNN #(
     output logic [WEIGHT_ADDR_WIDTH-1:0] dram_addr,
     output logic [22:0]                  dram_btt,
 
-    // DataMover M_AXIS_MM2S stream carrying one weight packet.
+    // DataMover stream for one physical NUM_CH-channel weight packet.
     input  logic [NUM_CH*8-1:0] weight_axis_tdata,
     input  logic                weight_axis_tvalid,
     output logic                weight_axis_tready,
     input  logic                weight_axis_tlast
 );
 
-    localparam integer IMAGE_PIXELS =
-        IMAGE_WIDTH * IMAGE_HEIGHT;
-    localparam integer POOL_WIDTH =
-        (IMAGE_WIDTH - 2) / 2;
-    localparam integer POOL_HEIGHT =
-        (IMAGE_HEIGHT - 2) / 2;
-    localparam integer INPUT_DEPTH =
-        IMAGE_PIXELS * NUM_INPUT_CHANNELS;
-    localparam integer OUTPUT_DEPTH =
-        POOL_WIDTH * POOL_HEIGHT * NUM_CH;
+    localparam integer LAYER1_WIDTH  = (IMAGE_WIDTH  - 2) / 2;
+    localparam integer LAYER1_HEIGHT = (IMAGE_HEIGHT - 2) / 2;
+    localparam integer LAYER2_WIDTH  = (LAYER1_WIDTH  - 2) / 2;
+    localparam integer LAYER2_HEIGHT = (LAYER1_HEIGHT - 2) / 2;
+    localparam integer LAYER3_WIDTH  = (LAYER2_WIDTH  - 2) / 2;
+    localparam integer LAYER3_HEIGHT = (LAYER2_HEIGHT - 2) / 2;
+
+    localparam integer IMAGE_PIXELS = IMAGE_WIDTH * IMAGE_HEIGHT;
+    localparam integer DEPTH_INPUT  = IMAGE_PIXELS;
+    localparam integer DEPTH_L0 =
+        LAYER1_WIDTH * LAYER1_HEIGHT
+        * (BASE_OUTPUT_CHANNELS << 0);
+    localparam integer DEPTH_L1 =
+        LAYER2_WIDTH * LAYER2_HEIGHT
+        * (BASE_OUTPUT_CHANNELS << 1);
+    localparam integer DEPTH_L2 =
+        LAYER3_WIDTH * LAYER3_HEIGHT
+        * (BASE_OUTPUT_CHANNELS << 2);
+    localparam integer DEPTH_01 =
+        (DEPTH_INPUT > DEPTH_L0) ? DEPTH_INPUT : DEPTH_L0;
+    localparam integer DEPTH_23 =
+        (DEPTH_L1 > DEPTH_L2) ? DEPTH_L1 : DEPTH_L2;
     localparam integer BUFFER_DEPTH =
-        (INPUT_DEPTH > OUTPUT_DEPTH) ? INPUT_DEPTH : OUTPUT_DEPTH;
+        (DEPTH_01 > DEPTH_23) ? DEPTH_01 : DEPTH_23;
 
     localparam integer CH_SELECT_WIDTH =
         (NUM_CH <= 1) ? 1 : $clog2(NUM_CH);
-    localparam integer IC_WIDTH =
-        (NUM_INPUT_CHANNELS <= 1)
-            ? 1 : $clog2(NUM_INPUT_CHANNELS);
-    localparam integer POOL_X_WIDTH =
-        (POOL_WIDTH <= 1) ? 1 : $clog2(POOL_WIDTH);
-    localparam integer POOL_Y_WIDTH =
-        (POOL_HEIGHT <= 1) ? 1 : $clog2(POOL_HEIGHT);
+    localparam integer CONFIG_WIDTH = 16;
+    localparam integer WEIGHT_PACKET_BYTES = 10 * NUM_CH;
 
     typedef enum logic [1:0] {
         CNN_IDLE,
         LOAD_IMAGE,
-        RUN_CONV
+        START_GROUP,
+        RUN_GROUP
     } cnn_state_t;
 
     cnn_state_t cnn_state;
 
     logic [IMAGE_ADDR_WIDTH:0] image_request_count;
     logic [IMAGE_ADDR_WIDTH:0] image_write_count;
+
+    // Visible in the integration waveform.
+    logic [1:0] layer_index;
+    logic [4:0] output_group_index;
+
     logic conv_start;
     logic conv_done;
     logic conv_busy;
 
-    // Conv_Controller ↔ Weight_Buffer
+    logic                    cfg_source_bank;
+    logic [CONFIG_WIDTH-1:0] cfg_image_width;
+    logic [CONFIG_WIDTH-1:0] cfg_image_height;
+    logic [CONFIG_WIDTH-1:0] cfg_input_channels;
+    logic [CONFIG_WIDTH-1:0] cfg_output_channels;
+    logic [CONFIG_WIDTH-1:0] cfg_output_groups;
+    logic [CONFIG_WIDTH-1:0] cfg_output_channel_base;
+    logic [WEIGHT_ADDR_WIDTH-1:0] cfg_layer_weight_base;
+    logic [WEIGHT_ADDR_WIDTH-1:0] cfg_group_weight_base;
+
+    // Conv_Controller ↔ Weight_Buffer.
     logic controller_weight_load_start;
     logic [WEIGHT_ADDR_WIDTH-1:0] controller_weight_load_addr;
     logic weight_busy;
@@ -96,20 +126,20 @@ module CNN #(
     logic signed [7:0] weight_data [0:NUM_CH-1][0:8];
     logic signed [7:0] bias_data   [0:NUM_CH-1];
 
-    // Conv_Controller ↔ Data_Buffer ↔ Shift_Buffer
+    // Conv_Controller ↔ Data_Buffer ↔ Shift_Buffer.
     logic controller_data_read_enable;
     logic controller_data_read_bank;
     logic [DATA_ADDR_WIDTH-1:0] controller_data_read_addr;
+    logic data_read_ready;
     logic [7:0] data_read_data;
     logic data_read_valid;
-    logic data_read_ready;
     logic data_read_data_ready;
 
     logic data_write_enable;
+    logic data_write_ready;
     logic data_write_bank;
     logic [DATA_ADDR_WIDTH-1:0] data_write_addr;
     logic [7:0] data_write_data;
-    logic data_write_ready;
 
     logic shift_pixel_ready;
     logic shift_clear;
@@ -119,16 +149,15 @@ module CNN #(
     logic [1:0] shift_window_index;
     logic shift_tile_done;
 
-    // Conv_Controller ↔ CH_wrapper
+    // CH and MaxPool path.
     logic [NUM_CH-1:0] ch_enable;
     logic acc_clear;
     logic first_ic;
     logic last_ic;
+    logic ch_pixel_ready;
     logic signed [7:0] conv_result [0:NUM_CH-1];
     logic [NUM_CH-1:0] conv_result_valid;
-    logic ch_pixel_ready;
 
-    // CH_wrapper ↔ MaxPool_wrapper ↔ Output_Mux
     logic [NUM_CH-1:0] maxpool_conv_ready;
     logic [7:0] relu_data [0:NUM_CH-1];
     logic [NUM_CH-1:0] pool_valid;
@@ -145,9 +174,18 @@ module CNN #(
     logic controller_data_write_bank;
     logic [DATA_ADDR_WIDTH-1:0] controller_data_write_addr;
 
-    logic [IC_WIDTH-1:0] current_input_channel;
-    logic [POOL_X_WIDTH-1:0] current_pool_x;
-    logic [POOL_Y_WIDTH-1:0] current_pool_y;
+    logic [CONFIG_WIDTH-1:0] current_input_channel;
+    logic [CONFIG_WIDTH-1:0] current_pool_x;
+    logic [CONFIG_WIDTH-1:0] current_pool_y;
+
+    initial begin
+        if ((NUM_CH <= 0)
+            || (((BASE_OUTPUT_CHANNELS << 0) % NUM_CH) != 0)
+            || (((BASE_OUTPUT_CHANNELS << 1) % NUM_CH) != 0)
+            || (((BASE_OUTPUT_CHANNELS << 2) % NUM_CH) != 0)) begin
+            $error("NUM_CH must divide every shifted output-channel count");
+        end
+    end
 
     assign busy = (cnn_state != CNN_IDLE);
 
@@ -163,12 +201,58 @@ module CNN #(
     assign dram_addr      = weight_request_addr;
     assign dram_btt       = 10 * NUM_CH;
 
-    // Data_Buffer has one write port. It first receives the camera image and
-    // later receives serialized ReLU results from Output_Mux.
+    // Select the run-time configuration for the active layer.
+    always_comb begin
+        cfg_source_bank        = 1'b0;
+        cfg_image_width        = IMAGE_WIDTH;
+        cfg_image_height       = IMAGE_HEIGHT;
+        cfg_input_channels     =
+            (layer_index == 0)
+                ? 16'd1
+                : (BASE_OUTPUT_CHANNELS << (layer_index-1));
+        cfg_output_channels    =
+            BASE_OUTPUT_CHANNELS << layer_index;
+        cfg_output_groups      =
+            (BASE_OUTPUT_CHANNELS << layer_index) / NUM_CH;
+        cfg_output_channel_base =
+            output_group_index * NUM_CH;
+        cfg_layer_weight_base = WEIGHT_BASE_LAYER0;
+
+        case (layer_index)
+            2'd0: begin
+                cfg_source_bank     = 1'b0;
+                cfg_image_width     = IMAGE_WIDTH;
+                cfg_image_height    = IMAGE_HEIGHT;
+                cfg_layer_weight_base = WEIGHT_BASE_LAYER0;
+            end
+
+            2'd1: begin
+                cfg_source_bank     = 1'b1;
+                cfg_image_width     = LAYER1_WIDTH;
+                cfg_image_height    = LAYER1_HEIGHT;
+                cfg_layer_weight_base = WEIGHT_BASE_LAYER1;
+            end
+
+            default: begin
+                cfg_source_bank     = 1'b0;
+                cfg_image_width     = LAYER2_WIDTH;
+                cfg_image_height    = LAYER2_HEIGHT;
+                cfg_layer_weight_base = WEIGHT_BASE_LAYER2;
+            end
+        endcase
+
+        cfg_group_weight_base =
+            cfg_layer_weight_base
+            + output_group_index
+                * (cfg_input_channels * WEIGHT_PACKET_BYTES);
+    end
+
+    // One physical write port is shared by initial image loading and all
+    // serialized layer results.
     always_comb begin
         data_write_enable = 1'b0;
         data_write_bank   = 1'b0;
-        data_write_addr   = {DATA_ADDR_WIDTH{1'b0}};
+        data_write_addr   = '0;
         data_write_data   = 8'd0;
 
         if (cnn_state == LOAD_IMAGE) begin
@@ -176,7 +260,7 @@ module CNN #(
             data_write_bank   = 1'b0;
             data_write_addr   = image_write_count;
             data_write_data   = img_data;
-        end else if (cnn_state == RUN_CONV) begin
+        end else begin
             data_write_enable = controller_data_write_enable;
             data_write_bank   = controller_data_write_bank;
             data_write_addr   = controller_data_write_addr;
@@ -184,12 +268,14 @@ module CNN #(
         end
     end
 
-    // Image loading and top-level operation sequencing.
+    // Load one image, then execute all output groups of all three layers.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             cnn_state           <= CNN_IDLE;
             image_request_count <= '0;
             image_write_count   <= '0;
+            layer_index         <= 2'd0;
+            output_group_index  <= 5'd0;
             conv_start          <= 1'b0;
             done                <= 1'b0;
         end else begin
@@ -201,6 +287,8 @@ module CNN #(
                     if (start) begin
                         image_request_count <= '0;
                         image_write_count   <= '0;
+                        layer_index         <= 2'd0;
+                        output_group_index  <= 5'd0;
                         cnn_state           <= LOAD_IMAGE;
                     end
                 end
@@ -212,9 +300,10 @@ module CNN #(
 
                     if (img_data_valid && img_data_ready) begin
                         if (image_write_count == IMAGE_PIXELS-1) begin
-                            image_write_count <= image_write_count;
-                            conv_start        <= 1'b1;
-                            cnn_state         <= RUN_CONV;
+                            image_write_count  <= image_write_count;
+                            layer_index        <= 2'd0;
+                            output_group_index <= 5'd0;
+                            cnn_state          <= START_GROUP;
                         end else begin
                             image_write_count <=
                                 image_write_count + 1'b1;
@@ -222,10 +311,29 @@ module CNN #(
                     end
                 end
 
-                RUN_CONV: begin
+                START_GROUP: begin
+                    conv_start <= 1'b1;
+                    cnn_state  <= RUN_GROUP;
+                end
+
+                RUN_GROUP: begin
                     if (conv_done) begin
-                        cnn_state <= CNN_IDLE;
-                        done      <= 1'b1;
+                        if (output_group_index
+                            == cfg_output_groups-1) begin
+                            output_group_index <= 5'd0;
+
+                            if (layer_index == 2) begin
+                                cnn_state <= CNN_IDLE;
+                                done      <= 1'b1;
+                            end else begin
+                                layer_index <= layer_index + 1'b1;
+                                cnn_state   <= START_GROUP;
+                            end
+                        end else begin
+                            output_group_index <=
+                                output_group_index + 1'b1;
+                            cnn_state <= START_GROUP;
+                        end
                     end
                 end
 
@@ -237,48 +345,50 @@ module CNN #(
     end
 
     Conv_Controller #(
-        .NUM_CH            (NUM_CH),
-        .NUM_INPUT_CHANNELS(NUM_INPUT_CHANNELS),
-        .IMAGE_WIDTH       (IMAGE_WIDTH),
-        .IMAGE_HEIGHT      (IMAGE_HEIGHT),
-        .ADDR_WIDTH        (DATA_ADDR_WIDTH)
+        .NUM_CH      (NUM_CH),
+        .ADDR_WIDTH  (DATA_ADDR_WIDTH),
+        .CONFIG_WIDTH(CONFIG_WIDTH)
     ) U_CONV_CONTROLLER (
-        .clk                (clk),
-        .rst_n              (rst_n),
-        .start              (conv_start),
-        .source_bank        (1'b0),
-        .weight_base_addr   (WEIGHT_BASE_ADDR),
-        .busy               (conv_busy),
-        .done               (conv_done),
-        .weight_load_start  (controller_weight_load_start),
-        .weight_load_addr   (controller_weight_load_addr),
-        .weight_load_ready  (weight_load_ready),
-        .weight_valid       (weight_valid),
-        .data_read_enable   (controller_data_read_enable),
-        .data_read_ready    (data_read_ready),
-        .data_read_bank     (controller_data_read_bank),
-        .data_read_addr     (controller_data_read_addr),
-        .shift_pixel_ready  (shift_pixel_ready),
-        .shift_window_valid (shift_window_valid),
-        .shift_window_ready (shift_window_ready),
-        .shift_tile_done    (shift_tile_done),
-        .shift_clear        (shift_clear),
-        .ch_enable          (ch_enable),
-        .acc_clear          (acc_clear),
-        .first_ic           (first_ic),
-        .last_ic            (last_ic),
-        .pool_valid         (pool_valid),
-        .maxpool_clear      (maxpool_clear),
-        .channel_select     (channel_select),
-        .select_enable      (select_enable),
-        .ch_wvalid          (ch_wvalid),
-        .ch_wready          (ch_wready),
-        .data_write_enable  (controller_data_write_enable),
-        .data_write_bank    (controller_data_write_bank),
-        .data_write_addr    (controller_data_write_addr),
-        .input_channel_index(current_input_channel),
-        .pool_x_index       (current_pool_x),
-        .pool_y_index       (current_pool_y)
+        .clk                    (clk),
+        .rst_n                  (rst_n),
+        .start                  (conv_start),
+        .source_bank            (cfg_source_bank),
+        .cfg_image_width        (cfg_image_width),
+        .cfg_image_height       (cfg_image_height),
+        .cfg_input_channels     (cfg_input_channels),
+        .cfg_output_channel_base(cfg_output_channel_base),
+        .weight_base_addr       (cfg_group_weight_base),
+        .busy                   (conv_busy),
+        .done                   (conv_done),
+        .weight_load_start      (controller_weight_load_start),
+        .weight_load_addr       (controller_weight_load_addr),
+        .weight_load_ready      (weight_load_ready),
+        .weight_valid           (weight_valid),
+        .data_read_enable       (controller_data_read_enable),
+        .data_read_ready        (data_read_ready),
+        .data_read_bank         (controller_data_read_bank),
+        .data_read_addr         (controller_data_read_addr),
+        .shift_pixel_ready      (shift_pixel_ready),
+        .shift_window_valid     (shift_window_valid),
+        .shift_window_ready     (shift_window_ready),
+        .shift_tile_done        (shift_tile_done),
+        .shift_clear            (shift_clear),
+        .ch_enable              (ch_enable),
+        .acc_clear              (acc_clear),
+        .first_ic               (first_ic),
+        .last_ic                (last_ic),
+        .pool_valid             (pool_valid),
+        .maxpool_clear          (maxpool_clear),
+        .channel_select         (channel_select),
+        .select_enable          (select_enable),
+        .ch_wvalid              (ch_wvalid),
+        .ch_wready              (ch_wready),
+        .data_write_enable      (controller_data_write_enable),
+        .data_write_bank        (controller_data_write_bank),
+        .data_write_addr        (controller_data_write_addr),
+        .input_channel_index    (current_input_channel),
+        .pool_x_index           (current_pool_x),
+        .pool_y_index           (current_pool_y)
     );
 
     Weight_Buffer #(
@@ -309,19 +419,19 @@ module CNN #(
         .DEPTH     (BUFFER_DEPTH),
         .ADDR_WIDTH(DATA_ADDR_WIDTH)
     ) U_DATA_BUFFER (
-        .clk         (clk),
-        .rst_n       (rst_n),
-        .write_enable(data_write_enable),
-        .write_ready (data_write_ready),
-        .write_bank  (data_write_bank),
-        .write_addr  (data_write_addr),
-        .write_data  (data_write_data),
-        .read_enable (controller_data_read_enable),
-        .read_ready  (data_read_ready),
-        .read_bank   (controller_data_read_bank),
-        .read_addr   (controller_data_read_addr),
-        .read_data   (data_read_data),
-        .read_valid  (data_read_valid),
+        .clk            (clk),
+        .rst_n          (rst_n),
+        .write_enable   (data_write_enable),
+        .write_ready    (data_write_ready),
+        .write_bank     (data_write_bank),
+        .write_addr     (data_write_addr),
+        .write_data     (data_write_data),
+        .read_enable    (controller_data_read_enable),
+        .read_ready     (data_read_ready),
+        .read_bank      (controller_data_read_bank),
+        .read_addr      (controller_data_read_addr),
+        .read_data      (data_read_data),
+        .read_valid     (data_read_valid),
         .read_data_ready(data_read_data_ready)
     );
 
@@ -392,8 +502,6 @@ module CNN #(
         .pool_ready   (pool_ready)
     );
 
-    // Ready paths are kept explicit so every internal transfer advances only
-    // on valid && ready.
     assign data_read_data_ready = shift_pixel_ready;
     assign shift_window_ready   = ch_pixel_ready;
     assign ch_wready            = data_write_ready;
