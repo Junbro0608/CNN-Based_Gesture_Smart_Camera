@@ -2,9 +2,9 @@
 
 // Controls one physical NUM_CH-wide output-channel group.
 //
-// Image size, input-channel count, output-channel base and source bank are
-// accepted with start. CNN reuses this controller for every output group and
-// for all three convolution layers.
+// CH results are stored by CH_Result_Buffer as four spatial vectors. When
+// MaxPool_en is high, one value per channel is written. Otherwise all four
+// convolution positions are written without spatial downsampling.
 module Conv_Controller #(
     parameter integer NUM_CH       = 8,
     parameter integer ADDR_WIDTH   = 32,
@@ -15,9 +15,9 @@ module Conv_Controller #(
     input logic clk,
     input logic rst_n,
 
-    // One layer/output-group command.
     input  logic                    start,
     input  logic                    source_bank,
+    input  logic                    MaxPool_en,
     input  logic [CONFIG_WIDTH-1:0] cfg_image_width,
     input  logic [CONFIG_WIDTH-1:0] cfg_image_height,
     input  logic [CONFIG_WIDTH-1:0] cfg_input_channels,
@@ -26,13 +26,13 @@ module Conv_Controller #(
     output logic                    busy,
     output logic                    done,
 
-    // Weight_Buffer command/status.
+    // External Weight Buffer request and CNN-local register status.
     output logic                  weight_load_start,
     output logic [ADDR_WIDTH-1:0] weight_load_addr,
     input  logic                  weight_load_ready,
     input  logic                  weight_valid,
 
-    // Data_Buffer request and Shift_Buffer status.
+    // External Data Buffer request and Shift_Buffer status.
     output logic                  data_read_enable,
     input  logic                  data_read_ready,
     output logic                  data_read_bank,
@@ -49,17 +49,16 @@ module Conv_Controller #(
     output logic              first_ic,
     output logic              last_ic,
 
-    // MaxPool_wrapper control/status.
-    input  logic [NUM_CH-1:0] pool_valid,
-    output logic              maxpool_clear,
+    // CH_Result_Buffer control and serialized output status.
+    output logic result_buffer_clear,
+    input  logic result_output_valid,
+    output logic result_output_ready,
+    input  logic result_output_done,
+    input  logic [CH_SELECT_WIDTH-1:0] result_output_channel,
+    input  logic [1:0] result_output_position,
 
-    // Output_Mux and shared write-port handshake.
-    output logic [CH_SELECT_WIDTH-1:0] channel_select,
-    output logic                       select_enable,
-    input  logic                       ch_wvalid,
-    input  logic                       ch_wready,
-
-    // Data_Buffer write control. Write data comes directly from Output_Mux.
+    // External Data Buffer write control. Write data comes directly from
+    // CH_Result_Buffer.
     output logic                  data_write_enable,
     output logic                  data_write_bank,
     output logic [ADDR_WIDTH-1:0] data_write_addr,
@@ -76,7 +75,7 @@ module Conv_Controller #(
         IDLE,
         SET_WEIGHT_DATA,
         CONV,
-        MAXPOOL_RELU,
+        POST_PROCESS,
         PUSH_DATA
     } state_t;
 
@@ -88,9 +87,9 @@ module Conv_Controller #(
     logic [CONFIG_WIDTH-1:0] input_channel_reg;
     logic [CONFIG_WIDTH-1:0] pool_x_reg;
     logic [CONFIG_WIDTH-1:0] pool_y_reg;
-    logic [CH_SELECT_WIDTH-1:0] output_channel_reg;
 
     logic source_bank_reg;
+    logic MaxPool_en_reg;
     logic [CONFIG_WIDTH-1:0] image_width_reg;
     logic [CONFIG_WIDTH-1:0] image_height_reg;
     logic [CONFIG_WIDTH-1:0] input_channels_reg;
@@ -98,19 +97,36 @@ module Conv_Controller #(
     logic [ADDR_WIDTH-1:0] weight_base_addr_reg;
 
     logic [ADDR_WIDTH-1:0] image_pixels;
-    logic [ADDR_WIDTH-1:0] pool_width;
-    logic [ADDR_WIDTH-1:0] pool_height;
-    logic [ADDR_WIDTH-1:0] pool_pixels;
+    logic [ADDR_WIDTH-1:0] conv_width;
+    logic [ADDR_WIDTH-1:0] conv_height;
+    logic [ADDR_WIDTH-1:0] conv_pixels;
+    logic [ADDR_WIDTH-1:0] tile_width;
+    logic [ADDR_WIDTH-1:0] tile_height;
+    logic [ADDR_WIDTH-1:0] pooled_pixels;
+    logic [ADDR_WIDTH-1:0] output_spatial_addr;
 
     assign input_channel_index = input_channel_reg;
     assign pool_x_index        = pool_x_reg;
     assign pool_y_index        = pool_y_reg;
 
     always_comb begin
-        image_pixels = image_width_reg * image_height_reg;
-        pool_width   = (image_width_reg - 2) / 2;
-        pool_height  = (image_height_reg - 2) / 2;
-        pool_pixels  = pool_width * pool_height;
+        image_pixels  = image_width_reg * image_height_reg;
+        conv_width    = image_width_reg - 2;
+        conv_height   = image_height_reg - 2;
+        conv_pixels   = conv_width * conv_height;
+        tile_width    = conv_width / 2;
+        tile_height   = conv_height / 2;
+        pooled_pixels = tile_width * tile_height;
+
+        if (MaxPool_en_reg) begin
+            output_spatial_addr =
+                pool_y_reg * tile_width + pool_x_reg;
+        end else begin
+            output_spatial_addr =
+                (pool_y_reg * 2 + result_output_position[1])
+                    * conv_width
+                + (pool_x_reg * 2 + result_output_position[0]);
+        end
     end
 
     always_comb begin
@@ -136,25 +152,22 @@ module Conv_Controller #(
         first_ic  = (input_channel_reg == 0);
         last_ic   = (input_channel_reg == input_channels_reg-1);
 
-        maxpool_clear = 1'b0;
-
-        channel_select = output_channel_reg;
-        select_enable  = 1'b0;
+        result_buffer_clear = 1'b0;
+        result_output_ready = 1'b0;
 
         data_write_enable = 1'b0;
         data_write_bank   = !source_bank_reg;
         data_write_addr   =
-            (output_channel_base_reg + output_channel_reg)
-            * pool_pixels
-            + pool_y_reg * pool_width
-            + pool_x_reg;
+            (output_channel_base_reg + result_output_channel)
+                * (MaxPool_en_reg ? pooled_pixels : conv_pixels)
+            + output_spatial_addr;
 
         case (state)
             IDLE: begin
                 if (start) begin
-                    acc_clear     = 1'b1;
-                    maxpool_clear = 1'b1;
-                    shift_clear   = 1'b1;
+                    acc_clear          = 1'b1;
+                    result_buffer_clear = 1'b1;
+                    shift_clear        = 1'b1;
                 end
             end
 
@@ -175,13 +188,13 @@ module Conv_Controller #(
                 ch_enable = {NUM_CH{1'b1}};
             end
 
-            MAXPOOL_RELU: begin
-                // MaxPool results remain valid until PUSH_DATA accepts them.
+            POST_PROCESS: begin
+                // Wait until CH_Result_Buffer has captured all four vectors.
             end
 
             PUSH_DATA: begin
-                select_enable     = 1'b1;
-                data_write_enable = ch_wvalid && ch_wready;
+                result_output_ready = 1'b1;
+                data_write_enable   = result_output_valid;
             end
 
             default: begin
@@ -198,8 +211,8 @@ module Conv_Controller #(
             input_channel_reg       <= '0;
             pool_x_reg              <= '0;
             pool_y_reg              <= '0;
-            output_channel_reg      <= '0;
             source_bank_reg         <= 1'b0;
+            MaxPool_en_reg          <= 1'b0;
             image_width_reg         <= '0;
             image_height_reg        <= '0;
             input_channels_reg      <= '0;
@@ -213,6 +226,7 @@ module Conv_Controller #(
                 IDLE: begin
                     if (start) begin
                         source_bank_reg         <= source_bank;
+                        MaxPool_en_reg          <= MaxPool_en;
                         image_width_reg         <= cfg_image_width;
                         image_height_reg        <= cfg_image_height;
                         input_channels_reg      <= cfg_input_channels;
@@ -222,7 +236,6 @@ module Conv_Controller #(
                         input_channel_reg       <= '0;
                         pool_x_reg              <= '0;
                         pool_y_reg              <= '0;
-                        output_channel_reg      <= '0;
                         setup_issued            <= 1'b0;
                         data_request_count      <= 5'd0;
                         state                   <= SET_WEIGHT_DATA;
@@ -247,7 +260,7 @@ module Conv_Controller #(
                     if (shift_tile_done) begin
                         if (input_channel_reg
                             == input_channels_reg-1) begin
-                            state <= MAXPOOL_RELU;
+                            state <= POST_PROCESS;
                         end else begin
                             input_channel_reg <=
                                 input_channel_reg + 1'b1;
@@ -258,38 +271,29 @@ module Conv_Controller #(
                     end
                 end
 
-                MAXPOOL_RELU: begin
-                    if (pool_valid == {NUM_CH{1'b1}}) begin
-                        output_channel_reg <= '0;
-                        state              <= PUSH_DATA;
-                    end
+                POST_PROCESS: begin
+                    if (result_output_valid)
+                        state <= PUSH_DATA;
                 end
 
                 PUSH_DATA: begin
-                    if (ch_wvalid && ch_wready) begin
-                        if (output_channel_reg == NUM_CH-1) begin
-                            output_channel_reg <= '0;
-
-                            if ((pool_x_reg == pool_width-1)
-                                && (pool_y_reg == pool_height-1)) begin
-                                state <= IDLE;
-                                done  <= 1'b1;
-                            end else begin
-                                if (pool_x_reg == pool_width-1) begin
-                                    pool_x_reg <= '0;
-                                    pool_y_reg <= pool_y_reg + 1'b1;
-                                end else begin
-                                    pool_x_reg <= pool_x_reg + 1'b1;
-                                end
-
-                                input_channel_reg  <= '0;
-                                setup_issued       <= 1'b0;
-                                data_request_count <= 5'd0;
-                                state              <= SET_WEIGHT_DATA;
-                            end
+                    if (result_output_done) begin
+                        if ((pool_x_reg == tile_width-1)
+                            && (pool_y_reg == tile_height-1)) begin
+                            state <= IDLE;
+                            done  <= 1'b1;
                         end else begin
-                            output_channel_reg <=
-                                output_channel_reg + 1'b1;
+                            if (pool_x_reg == tile_width-1) begin
+                                pool_x_reg <= '0;
+                                pool_y_reg <= pool_y_reg + 1'b1;
+                            end else begin
+                                pool_x_reg <= pool_x_reg + 1'b1;
+                            end
+
+                            input_channel_reg  <= '0;
+                            setup_issued       <= 1'b0;
+                            data_request_count <= 5'd0;
+                            state              <= SET_WEIGHT_DATA;
                         end
                     end
                 end

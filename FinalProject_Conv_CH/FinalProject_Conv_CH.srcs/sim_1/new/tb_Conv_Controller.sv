@@ -12,6 +12,9 @@ module tb_Conv_Controller;
     localparam integer POOL_WIDTH      = (IMAGE_WIDTH-2)/2;
     localparam integer POOL_HEIGHT     = (IMAGE_HEIGHT-2)/2;
     localparam integer POOL_PIXELS     = POOL_WIDTH*POOL_HEIGHT;
+    localparam integer CONV_WIDTH      = IMAGE_WIDTH-2;
+    localparam integer CONV_HEIGHT     = IMAGE_HEIGHT-2;
+    localparam integer CONV_PIXELS     = CONV_WIDTH*CONV_HEIGHT;
 
     localparam logic [ADDR_WIDTH-1:0] WEIGHT_BASE = 16'h1000;
 
@@ -19,6 +22,7 @@ module tb_Conv_Controller;
     logic rst_n;
     logic start;
     logic source_bank;
+    logic MaxPool_en;
     logic [15:0] cfg_image_width;
     logic [15:0] cfg_image_height;
     logic [15:0] cfg_input_channels;
@@ -47,13 +51,12 @@ module tb_Conv_Controller;
     logic first_ic;
     logic last_ic;
 
-    logic [NUM_CH-1:0] pool_valid;
-    logic maxpool_clear;
-
-    logic [CH_SELECT_WIDTH-1:0] channel_select;
-    logic select_enable;
-    logic ch_wvalid;
-    logic ch_wready;
+    logic result_buffer_clear;
+    logic result_output_valid;
+    logic result_output_ready;
+    logic result_output_done;
+    logic [CH_SELECT_WIDTH-1:0] result_output_channel;
+    logic [1:0] result_output_position;
 
     logic data_write_enable;
     logic data_write_bank;
@@ -85,6 +88,7 @@ module tb_Conv_Controller;
         .rst_n              (rst_n),
         .start              (start),
         .source_bank        (source_bank),
+        .MaxPool_en         (MaxPool_en),
         .cfg_image_width    (cfg_image_width),
         .cfg_image_height   (cfg_image_height),
         .cfg_input_channels (cfg_input_channels),
@@ -109,12 +113,12 @@ module tb_Conv_Controller;
         .acc_clear          (acc_clear),
         .first_ic           (first_ic),
         .last_ic            (last_ic),
-        .pool_valid         (pool_valid),
-        .maxpool_clear      (maxpool_clear),
-        .channel_select     (channel_select),
-        .select_enable      (select_enable),
-        .ch_wvalid          (ch_wvalid),
-        .ch_wready          (ch_wready),
+        .result_buffer_clear(result_buffer_clear),
+        .result_output_valid(result_output_valid),
+        .result_output_ready(result_output_ready),
+        .result_output_done (result_output_done),
+        .result_output_channel(result_output_channel),
+        .result_output_position(result_output_position),
         .data_write_enable  (data_write_enable),
         .data_write_bank    (data_write_bank),
         .data_write_addr    (data_write_addr),
@@ -132,8 +136,11 @@ module tb_Conv_Controller;
         && shift_window_ready
         && (output_window_count == 3);
 
-    assign ch_wvalid =
-        select_enable && pool_valid[channel_select];
+    assign result_output_done =
+        result_output_valid
+        && result_output_ready
+        && (result_output_channel == NUM_CH-1)
+        && (MaxPool_en || (result_output_position == 2'd3));
 
     // Periodic backpressure on every controller-facing handshake.
     always_ff @(posedge clk or negedge rst_n) begin
@@ -142,13 +149,11 @@ module tb_Conv_Controller;
             weight_load_ready  <= 1'b0;
             data_read_ready    <= 1'b0;
             shift_window_ready <= 1'b0;
-            ch_wready          <= 1'b0;
         end else begin
             handshake_cycle    <= handshake_cycle + 1;
             weight_load_ready  <= ((handshake_cycle % 3) != 0);
             data_read_ready    <= ((handshake_cycle % 4) != 1);
             shift_window_ready <= ((handshake_cycle % 5) != 2);
-            ch_wready          <= ((handshake_cycle % 3) != 1);
         end
     end
 
@@ -207,15 +212,20 @@ module tb_Conv_Controller;
         end
     end
 
-    // MaxPool wrapper model. Results become valid after the last input
-    // channel's fourth convolution window.
+    // CH_Result_Buffer model. Serialized pooled results become valid after
+    // the last input channel's fourth convolution window.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            pool_valid <= '0;
-            pool_delay <= 0;
+            result_output_valid    <= 1'b0;
+            result_output_channel  <= '0;
+            result_output_position <= 2'd0;
+            pool_delay             <= 0;
         end else begin
-            if (maxpool_clear)
-                pool_valid <= '0;
+            if (result_buffer_clear) begin
+                result_output_valid    <= 1'b0;
+                result_output_channel  <= '0;
+                result_output_position <= 2'd0;
+            end
 
             if (shift_tile_done && last_ic)
                 pool_delay <= 3;
@@ -223,12 +233,29 @@ module tb_Conv_Controller;
             if (pool_delay > 0) begin
                 pool_delay <= pool_delay - 1;
 
-                if (pool_delay == 1)
-                    pool_valid <= {NUM_CH{1'b1}};
+                if (pool_delay == 1) begin
+                    result_output_valid   <= 1'b1;
+                    result_output_channel <= '0;
+                end
             end
 
-            if (ch_wvalid && ch_wready)
-                pool_valid[channel_select] <= 1'b0;
+            if (result_output_valid && result_output_ready) begin
+                if (result_output_channel == NUM_CH-1) begin
+                    result_output_channel <= '0;
+
+                    if (MaxPool_en
+                        || (result_output_position == 2'd3)) begin
+                        result_output_valid    <= 1'b0;
+                        result_output_position <= 2'd0;
+                    end else begin
+                        result_output_position
+                            <= result_output_position + 1'b1;
+                    end
+                end else begin
+                    result_output_channel
+                        <= result_output_channel + 1'b1;
+                end
+            end
         end
     end
 
@@ -275,8 +302,8 @@ module tb_Conv_Controller;
         end
 
         if (rst_n && data_write_enable) begin
-            if (!ch_wvalid) begin
-                $error("Data write occurred without ch_wvalid");
+            if (!result_output_valid) begin
+                $error("Data write occurred without result_output_valid");
                 error_count = error_count + 1;
             end
 
@@ -285,10 +312,19 @@ module tb_Conv_Controller;
                 error_count = error_count + 1;
             end
 
-            expected_address =
-                channel_select * POOL_PIXELS
-                + pool_y_index * POOL_WIDTH
-                + pool_x_index;
+            if (MaxPool_en) begin
+                expected_address =
+                    result_output_channel * POOL_PIXELS
+                    + pool_y_index * POOL_WIDTH
+                    + pool_x_index;
+            end else begin
+                expected_address =
+                    result_output_channel * CONV_PIXELS
+                    + (pool_y_index*2 + result_output_position[1])
+                        * CONV_WIDTH
+                    + pool_x_index*2
+                    + result_output_position[0];
+            end
 
             if (data_write_addr !== expected_address[ADDR_WIDTH-1:0]) begin
                 $error("Data write address: expected %0d, got %0d",
@@ -304,6 +340,7 @@ module tb_Conv_Controller;
         rst_n             = 1'b0;
         start             = 1'b0;
         source_bank       = 1'b0;
+        MaxPool_en        = 1'b1;
         cfg_image_width   = IMAGE_WIDTH;
         cfg_image_height  = IMAGE_HEIGHT;
         cfg_input_channels = NUM_INPUT_CHANNELS;
@@ -332,7 +369,7 @@ module tb_Conv_Controller;
 
         if ((busy !== 1'b1)
             || (acc_clear !== 1'b0)
-            || (maxpool_clear !== 1'b0)) begin
+            || (result_buffer_clear !== 1'b0)) begin
             // Clear pulses were accepted on the start edge and are low after
             // the state transition.
             if (busy !== 1'b1) begin
@@ -380,8 +417,53 @@ module tb_Conv_Controller;
             error_count = error_count + 1;
         end
 
+        // Run the same image with MaxPool bypassed. Every tile must now
+        // produce four spatial positions per output channel.
+        weight_load_count = 0;
+        total_read_count  = 0;
+        total_write_count = 0;
+
+        @(negedge clk);
+        source_bank = 1'b0;
+        MaxPool_en  = 1'b0;
+        start       = 1'b1;
+
+        @(negedge clk);
+        start = 1'b0;
+
+        wait (done === 1'b1);
+        #1;
+
+        if (weight_load_count
+            != POOL_WIDTH*POOL_HEIGHT*NUM_INPUT_CHANNELS) begin
+            $error("Bypass weight load count is incorrect");
+            error_count = error_count + 1;
+        end
+
+        if (total_read_count
+            != POOL_WIDTH*POOL_HEIGHT*NUM_INPUT_CHANNELS*16) begin
+            $error("Bypass read count is incorrect");
+            error_count = error_count + 1;
+        end
+
+        if (total_write_count
+            != POOL_WIDTH*POOL_HEIGHT*NUM_CH*4) begin
+            $error("Expected %0d bypass writes, got %0d",
+                   POOL_WIDTH*POOL_HEIGHT*NUM_CH*4,
+                   total_write_count);
+            error_count = error_count + 1;
+        end
+
+        @(posedge clk);
+        #1;
+
+        if ((busy !== 1'b0) || (done !== 1'b0)) begin
+            $error("Bypass run did not return to idle");
+            error_count = error_count + 1;
+        end
+
         if (error_count == 0)
-            $display("PASS: all Conv_Controller tests passed");
+            $display("PASS: pooled and bypass Conv_Controller tests passed");
         else
             $fatal(1,
                    "FAIL: %0d Conv_Controller test(s) failed",

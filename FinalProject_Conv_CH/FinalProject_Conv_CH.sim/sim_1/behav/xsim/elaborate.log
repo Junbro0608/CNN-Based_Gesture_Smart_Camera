@@ -9,8 +9,6 @@ Starting simulation data flow analysis
 Completed simulation data flow analysis
 Time Resolution for simulation is 1ps
 Compiling module xil_defaultlib.Conv_Controller_default
-Compiling module xil_defaultlib.Weight_Buffer
-Compiling module xil_defaultlib.Data_Buffer(DEPTH=7200,ADDR_WIDT...
 Compiling module xil_defaultlib.Shift_Buffer
 Compiling module xil_defaultlib.CH
 Compiling module xil_defaultlib.CH_wrapper_default

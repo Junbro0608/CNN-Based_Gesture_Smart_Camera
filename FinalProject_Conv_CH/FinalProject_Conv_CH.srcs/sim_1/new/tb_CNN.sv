@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 
-// Full 1->32->64->128 three-layer CNN test with reproducible pseudo-random
-// image/weight values and a completely independent behavioral golden model.
+// Full 1->32->64->128 three-layer CNN test. Layers 0/1 use MaxPool+ReLU;
+// Layer 2 bypasses MaxPool and applies ReLU to every convolution result.
 module tb_CNN;
 
     localparam integer NUM_CH           = 8;
@@ -12,15 +12,18 @@ module tb_CNN;
     localparam integer IMAGE_WIDTH      = 32;
     localparam integer IMAGE_HEIGHT     = 32;
     localparam integer IMAGE_PIXELS     = IMAGE_WIDTH*IMAGE_HEIGHT;
-    localparam integer IMAGE_ADDR_WIDTH = $clog2(IMAGE_PIXELS);
     localparam integer ADDR_WIDTH       = 32;
+    localparam integer BUFFER_DATA_WIDTH = 8;
 
     localparam integer L0_WIDTH  = (IMAGE_WIDTH-2)/2;
     localparam integer L0_HEIGHT = (IMAGE_HEIGHT-2)/2;
     localparam integer L1_WIDTH  = (L0_WIDTH-2)/2;
     localparam integer L1_HEIGHT = (L0_HEIGHT-2)/2;
-    localparam integer L2_WIDTH  = (L1_WIDTH-2)/2;
-    localparam integer L2_HEIGHT = (L1_HEIGHT-2)/2;
+    // Layer 2 bypasses MaxPool, so its valid-convolution result remains 4x4.
+    localparam integer L2_WIDTH  = L1_WIDTH-2;
+    localparam integer L2_HEIGHT = L1_HEIGHT-2;
+    localparam integer L2_TILE_WIDTH  = (L1_WIDTH-2)/2;
+    localparam integer L2_TILE_HEIGHT = (L1_HEIGHT-2)/2;
 
     localparam integer L0_PIXELS = L0_WIDTH*L0_HEIGHT;
     localparam integer L1_PIXELS = L1_WIDTH*L1_HEIGHT;
@@ -34,7 +37,8 @@ module tb_CNN;
     localparam integer L1_WEIGHT_REQUESTS =
         L1_PIXELS * (L1_CHANNELS/NUM_CH) * L0_CHANNELS;
     localparam integer L2_WEIGHT_REQUESTS =
-        L2_PIXELS * (L2_CHANNELS/NUM_CH) * L1_CHANNELS;
+        (L2_TILE_WIDTH*L2_TILE_HEIGHT)
+        * (L2_CHANNELS/NUM_CH) * L1_CHANNELS;
 
     localparam logic [31:0] WEIGHT_BASE_L0 = 32'h1000_0000;
     localparam logic [31:0] WEIGHT_BASE_L1 = 32'h1100_0000;
@@ -46,22 +50,19 @@ module tb_CNN;
     logic done;
     logic busy;
 
-    logic                        img_read_enable;
-    logic [IMAGE_ADDR_WIDTH-1:0] img_read_addr;
-    logic [7:0]                  img_data;
-    logic                        img_data_valid;
-    logic                        img_data_ready;
+    logic [ADDR_WIDTH-1:0]      rAddr;
+    logic [BUFFER_DATA_WIDTH-1:0] rData;
+    logic                       we;
+    logic                       w_sel;
+    logic [ADDR_WIDTH-1:0]      wAddr;
+    logic [BUFFER_DATA_WIDTH-1:0] wData;
 
-    logic        dram_start_req;
-    logic [31:0] dram_addr;
-    logic [22:0] dram_btt;
+    logic                         weight_ren;
+    logic [ADDR_WIDTH-1:0]        weight_addr;
+    logic signed [7:0] weight_data [0:NUM_CH-1][0:8];
+    logic signed [7:0] bias_data   [0:NUM_CH-1];
 
-    logic [NUM_CH*8-1:0] weight_axis_tdata;
-    logic                weight_axis_tvalid;
-    logic                weight_axis_tready;
-    logic                weight_axis_tlast;
-
-    // Waveform guide: 0 reset/idle, 1 load, 2 layer0, 3 layer1,
+    // Waveform guide: 0 reset/idle, 2 layer0, 3 layer1,
     // 4 layer2, 5 done.
     logic [2:0] scenario_id;
 
@@ -74,8 +75,6 @@ module tb_CNN;
     logic [7:0] observed_l2 [0:7];
 
     integer error_count = 0;
-    integer image_request_count = 0;
-    integer image_response_count = 0;
     integer weight_request_count [0:2];
     integer group_start_count [0:2];
     integer result_write_count [0:2];
@@ -90,6 +89,12 @@ module tb_CNN;
     integer global_channel;
     integer final_addr;
     integer print_index;
+    integer init_addr;
+    integer init_ch;
+    integer init_kernel;
+
+    logic [BUFFER_DATA_WIDTH-1:0] external_bank_0 [0:L0_DEPTH-1];
+    logic [BUFFER_DATA_WIDTH-1:0] external_bank_1 [0:L0_DEPTH-1];
 
     // Golden-model loop variables.
     integer gm_oc;
@@ -114,7 +119,10 @@ module tb_CNN;
         .IMAGE_WIDTH       (IMAGE_WIDTH),
         .IMAGE_HEIGHT      (IMAGE_HEIGHT),
         .DATA_ADDR_WIDTH   (ADDR_WIDTH),
+        .BUFFER_DATA_WIDTH (BUFFER_DATA_WIDTH),
         .WEIGHT_ADDR_WIDTH (ADDR_WIDTH),
+        .LAYER2_MAXPOOL_EN (1'b0),
+        .LAYER2_RELU_EN    (1'b1),
         .WEIGHT_BASE_LAYER0(WEIGHT_BASE_L0),
         .WEIGHT_BASE_LAYER1(WEIGHT_BASE_L1),
         .WEIGHT_BASE_LAYER2(WEIGHT_BASE_L2)
@@ -124,18 +132,16 @@ module tb_CNN;
         .start             (start),
         .done              (done),
         .busy              (busy),
-        .img_read_enable   (img_read_enable),
-        .img_read_addr     (img_read_addr),
-        .img_data          (img_data),
-        .img_data_valid    (img_data_valid),
-        .img_data_ready    (img_data_ready),
-        .dram_start_req    (dram_start_req),
-        .dram_addr         (dram_addr),
-        .dram_btt          (dram_btt),
-        .weight_axis_tdata (weight_axis_tdata),
-        .weight_axis_tvalid(weight_axis_tvalid),
-        .weight_axis_tready(weight_axis_tready),
-        .weight_axis_tlast (weight_axis_tlast)
+        .rAddr             (rAddr),
+        .rData             (rData),
+        .we                (we),
+        .w_sel             (w_sel),
+        .wAddr             (wAddr),
+        .wData             (wData),
+        .weight_ren        (weight_ren),
+        .weight_addr       (weight_addr),
+        .weight_data       (weight_data),
+        .bias_data         (bias_data)
     );
 
     always #5 clk = ~clk;
@@ -319,7 +325,8 @@ module tb_CNN;
                 end
             end
 
-            // Layer 2: 6x6x64 -> 2x2x128.
+            // Layer 2: 6x6x64 -> 4x4x128.
+            // MaxPool is bypassed; ReLU is applied to every convolution.
             for (gm_oc = 0;
                  gm_oc < L2_CHANNELS;
                  gm_oc = gm_oc + 1) begin
@@ -329,53 +336,38 @@ module tb_CNN;
                     for (gm_px = 0;
                          gm_px < L2_WIDTH;
                          gm_px = gm_px + 1) begin
-                        gm_max = -128;
+                        gm_sum = bias_value(2, gm_oc);
 
-                        for (gm_wy = 0; gm_wy < 2; gm_wy=gm_wy+1)
-                        begin
-                            for (gm_wx = 0;
-                                 gm_wx < 2;
-                                 gm_wx=gm_wx+1) begin
-                                gm_sum = bias_value(2, gm_oc);
-
-                                for (gm_ic = 0;
-                                     gm_ic < L1_CHANNELS;
-                                     gm_ic=gm_ic+1)
-                                begin
-                                    for (gm_ky = 0;
-                                         gm_ky < 3;
-                                         gm_ky=gm_ky+1) begin
-                                        for (gm_kx = 0;
-                                             gm_kx < 3;
-                                             gm_kx=gm_kx+1) begin
-                                            gm_in_y =
-                                                gm_py*2 + gm_wy + gm_ky;
-                                            gm_in_x =
-                                                gm_px*2 + gm_wx + gm_kx;
-                                            gm_in_addr =
-                                                gm_ic*L1_PIXELS
-                                                + gm_in_y*L1_WIDTH
-                                                + gm_in_x;
-                                            gm_sum = gm_sum
-                                                + golden_l1[gm_in_addr]
-                                                * weight_value(
-                                                    2, gm_oc, gm_ic,
-                                                    gm_ky*3 + gm_kx
-                                                );
-                                        end
-                                    end
+                        for (gm_ic = 0;
+                             gm_ic < L1_CHANNELS;
+                             gm_ic=gm_ic+1) begin
+                            for (gm_ky = 0;
+                                 gm_ky < 3;
+                                 gm_ky=gm_ky+1) begin
+                                for (gm_kx = 0;
+                                     gm_kx < 3;
+                                     gm_kx=gm_kx+1) begin
+                                    gm_in_y = gm_py + gm_ky;
+                                    gm_in_x = gm_px + gm_kx;
+                                    gm_in_addr =
+                                        gm_ic*L1_PIXELS
+                                        + gm_in_y*L1_WIDTH
+                                        + gm_in_x;
+                                    gm_sum = gm_sum
+                                        + golden_l1[gm_in_addr]
+                                        * weight_value(
+                                            2, gm_oc, gm_ic,
+                                            gm_ky*3 + gm_kx
+                                        );
                                 end
-
-                                gm_q = quantize_signed8(gm_sum);
-                                if (gm_q > gm_max)
-                                    gm_max = gm_q;
                             end
                         end
 
+                        gm_q = quantize_signed8(gm_sum);
                         gm_out_addr =
                             gm_oc*L2_PIXELS + gm_py*L2_WIDTH + gm_px;
                         golden_l2[gm_out_addr] =
-                            (gm_max < 0) ? 8'd0 : gm_max[7:0];
+                            (gm_q < 0) ? 8'd0 : gm_q[7:0];
                     end
                 end
             end
@@ -387,60 +379,39 @@ module tb_CNN;
             scenario_id = 3'd0;
         else if (done)
             scenario_id = 3'd5;
-        else if (dut.cnn_state == 1)
-            scenario_id = 3'd1;
         else if (busy)
             scenario_id = 3'd2 + dut.layer_index;
         else
             scenario_id = 3'd0;
     end
 
-    // One-clock ping-pong buffer model.
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            img_data       <= 8'd0;
-            img_data_valid <= 1'b0;
-        end else begin
-            img_data_valid <= img_read_enable;
-
-            if (img_read_enable)
-                img_data <= image_value(img_read_addr);
-        end
-    end
-
+    // Exact behavior of the existing pingpongBuffer:
+    //   w_sel=0 writes Bank A and reads Bank B.
+    //   w_sel=1 writes Bank B and reads Bank A.
+    // The input image is already present in Bank A before CNN start.
     always @(posedge clk) begin
-        if (rst_n && img_read_enable) begin
-            if (img_read_addr
-                !== image_request_count[IMAGE_ADDR_WIDTH-1:0]) begin
-                $error("Image address: expected %0d, got %0d",
-                       image_request_count, img_read_addr);
-                error_count = error_count + 1;
-            end
-            image_request_count = image_request_count + 1;
-        end
+        if (w_sel)
+            rData <= external_bank_0[rAddr];
+        else
+            rData <= external_bank_1[rAddr];
 
-        if (rst_n && img_data_valid && img_data_ready)
-            image_response_count = image_response_count + 1;
+        if (we) begin
+            if (w_sel)
+                external_bank_1[wAddr] <= wData;
+            else
+                external_bank_0[wAddr] <= wData;
+        end
     end
 
-    // Weight/bias stream generator using the same deterministic value
-    // definitions as the independent golden model.
-    initial begin
-        weight_axis_tdata  = '0;
-        weight_axis_tvalid = 1'b0;
-        weight_axis_tlast  = 1'b0;
-
-        forever begin
-            @(posedge dram_start_req);
+    // External synchronous Weight Buffer model. A request address is
+    // accepted with weight_ren and the complete kernel/bias response is
+    // registered for the CNN to capture on the following clock.
+    always @(posedge clk) begin
+        if (weight_ren) begin
             packet_layer = dut.layer_index;
             packet_input_channel = dut.current_input_channel;
             weight_request_count[packet_layer] =
                 weight_request_count[packet_layer] + 1;
-
-            if (dram_btt !== 23'd80) begin
-                $error("Expected BTT=80, got %0d", dram_btt);
-                error_count = error_count + 1;
-            end
 
             if (packet_layer == 0)
                 expected_addr =
@@ -458,50 +429,32 @@ module tb_CNN;
                     + dut.output_group_index*(L1_CHANNELS*80)
                     + packet_input_channel*80;
 
-            if (dram_addr !== expected_addr[31:0]) begin
+            if (weight_addr !== expected_addr[31:0]) begin
                 $error("Layer %0d weight address expected %h, got %h",
-                       packet_layer, expected_addr[31:0], dram_addr);
+                       packet_layer, expected_addr[31:0], weight_addr);
                 error_count = error_count + 1;
             end
 
-            for (packet_word = 0;
-                 packet_word < 10;
-                 packet_word = packet_word + 1) begin
-                wait (weight_axis_tready === 1'b1);
-                @(negedge clk);
-                weight_axis_tdata = '0;
+            for (packet_channel = 0;
+                 packet_channel < NUM_CH;
+                 packet_channel=packet_channel+1) begin
+                packet_global_channel =
+                    dut.output_group_index*NUM_CH + packet_channel;
 
-                for (packet_channel = 0;
-                     packet_channel < NUM_CH;
-                     packet_channel = packet_channel+1) begin
-                    packet_global_channel =
-                        dut.output_group_index*NUM_CH + packet_channel;
-
-                    if (packet_word < 9)
-                        weight_axis_tdata[
-                            packet_channel*8 +: 8
-                        ] = weight_value(
+                for (packet_word = 0;
+                     packet_word < 9;
+                     packet_word=packet_word+1) begin
+                    weight_data[packet_channel][packet_word]
+                        <= weight_value(
                             packet_layer,
                             packet_global_channel,
                             packet_input_channel,
                             packet_word
                         );
-                    else
-                        weight_axis_tdata[
-                            packet_channel*8 +: 8
-                        ] = bias_value(
-                            packet_layer,
-                            packet_global_channel
-                        );
                 end
 
-                weight_axis_tvalid = 1'b1;
-                weight_axis_tlast  = (packet_word == 9);
-                @(posedge clk);
-                #1;
-                @(negedge clk);
-                weight_axis_tvalid = 1'b0;
-                weight_axis_tlast  = 1'b0;
+                bias_data[packet_channel]
+                    <= bias_value(packet_layer, packet_global_channel);
             end
         end
     end
@@ -516,7 +469,8 @@ module tb_CNN;
             result_write_count[dut.layer_index] =
                 result_write_count[dut.layer_index] + 1;
             global_channel =
-                dut.output_group_index*NUM_CH + dut.channel_select;
+                dut.output_group_index*NUM_CH
+                + dut.result_output_channel;
 
             case (dut.layer_index)
                 0: begin
@@ -527,12 +481,12 @@ module tb_CNN;
                     expected_bank = 1;
 
                     if (expected_addr < 8)
-                        observed_l0[expected_addr] = dut.data_write_data;
+                        observed_l0[expected_addr] = wData[7:0];
 
-                    if (dut.data_write_data !== golden_l0[expected_addr]) begin
+                    if (wData[7:0] !== golden_l0[expected_addr]) begin
                         $error("L0 addr %0d: expected %0d, got %0d",
                                expected_addr, golden_l0[expected_addr],
-                               dut.data_write_data);
+                               wData[7:0]);
                         error_count = error_count + 1;
                     end
                 end
@@ -545,12 +499,12 @@ module tb_CNN;
                     expected_bank = 0;
 
                     if (expected_addr < 8)
-                        observed_l1[expected_addr] = dut.data_write_data;
+                        observed_l1[expected_addr] = wData[7:0];
 
-                    if (dut.data_write_data !== golden_l1[expected_addr]) begin
+                    if (wData[7:0] !== golden_l1[expected_addr]) begin
                         $error("L1 addr %0d: expected %0d, got %0d",
                                expected_addr, golden_l1[expected_addr],
-                               dut.data_write_data);
+                               wData[7:0]);
                         error_count = error_count + 1;
                     end
                 end
@@ -558,17 +512,19 @@ module tb_CNN;
                 default: begin
                     expected_addr =
                         global_channel*L2_PIXELS
-                        + dut.current_pool_y*L2_WIDTH
-                        + dut.current_pool_x;
+                        + (dut.current_pool_y*2
+                           + dut.result_output_position[1])*L2_WIDTH
+                        + dut.current_pool_x*2
+                        + dut.result_output_position[0];
                     expected_bank = 1;
 
                     if (expected_addr < 8)
-                        observed_l2[expected_addr] = dut.data_write_data;
+                        observed_l2[expected_addr] = wData[7:0];
 
-                    if (dut.data_write_data !== golden_l2[expected_addr]) begin
+                    if (wData[7:0] !== golden_l2[expected_addr]) begin
                         $error("L2 addr %0d: expected %0d, got %0d",
                                expected_addr, golden_l2[expected_addr],
-                               dut.data_write_data);
+                               wData[7:0]);
                         error_count = error_count + 1;
                     end
                 end
@@ -581,7 +537,7 @@ module tb_CNN;
                 error_count = error_count + 1;
             end
 
-            if (dut.controller_data_write_bank !== expected_bank[0]) begin
+            if (w_sel !== expected_bank[0]) begin
                 $error("Layer %0d wrote wrong bank", dut.layer_index);
                 error_count = error_count + 1;
             end
@@ -591,6 +547,24 @@ module tb_CNN;
     initial begin
         rst_n = 1'b0;
         start = 1'b0;
+        rData = '0;
+
+        for (init_addr = 0; init_addr < L0_DEPTH;
+             init_addr=init_addr+1) begin
+            external_bank_0[init_addr] = 8'd0;
+            external_bank_1[init_addr] = 8'd0;
+        end
+
+        for (init_addr = 0; init_addr < IMAGE_PIXELS;
+             init_addr=init_addr+1)
+            external_bank_0[init_addr] = image_value(init_addr);
+
+        for (init_ch = 0; init_ch < NUM_CH; init_ch=init_ch+1) begin
+            bias_data[init_ch] = 8'sd0;
+            for (init_kernel = 0; init_kernel < 9;
+                 init_kernel=init_kernel+1)
+                weight_data[init_ch][init_kernel] = 8'sd0;
+        end
 
         for (print_index = 0; print_index < 3; print_index=print_index+1)
         begin
@@ -651,12 +625,6 @@ module tb_CNN;
         wait (done === 1'b1);
         #1;
 
-        if (image_request_count != IMAGE_PIXELS
-            || image_response_count != IMAGE_PIXELS) begin
-            $error("Image transfer count mismatch");
-            error_count = error_count + 1;
-        end
-
         if ((group_start_count[0] != L0_CHANNELS/NUM_CH)
             || (group_start_count[1] != L1_CHANNELS/NUM_CH)
             || (group_start_count[2] != L2_CHANNELS/NUM_CH)) begin
@@ -686,11 +654,10 @@ module tb_CNN;
 
         for (final_addr = 0; final_addr < L2_DEPTH;
              final_addr = final_addr+1) begin
-            if (dut.U_DATA_BUFFER.bank_1[final_addr]
-                !== golden_l2[final_addr]) begin
+            if (external_bank_1[final_addr] !== golden_l2[final_addr]) begin
                 $error("Final Bank1[%0d]: expected %0d, got %0d",
                        final_addr, golden_l2[final_addr],
-                       dut.U_DATA_BUFFER.bank_1[final_addr]);
+                       external_bank_1[final_addr]);
                 error_count = error_count + 1;
             end
         end
@@ -717,7 +684,9 @@ module tb_CNN;
         end
 
         if (error_count == 0)
-            $display("PASS: pseudo-random 1->32->64->128 golden comparison");
+            $display(
+                "PASS: 1->32->64->128 with L2 MaxPool bypass golden comparison"
+            );
         else
             $fatal(1, "FAIL: %0d CNN errors", error_count);
 
