@@ -38,11 +38,11 @@ DRAM
          ↓
  좌표별 Convolution 결과 8개
          ↓
-      2×2 Max Pool
+ CH Result Buffer(mem[0:3][0:7])
          ↓
-  Pooled Feature Map 저장
+  MaxPool/ReLU 선택 처리
          ↓
-         ReLU
+ 외부 Data Ping-pong Buffer
 ```
 
 ## 2. CH 모듈
@@ -92,11 +92,11 @@ output logic signed [7:0] result_out;
 output logic              result_valid;
 ```
 
-`result_out`과 `result_valid`는 ReLU에 직접 연결하지 않고 Max Pool 모듈로 전달한다.
+`result_out`과 `result_valid`는 `CH_Result_Buffer`로 전달한다.
 
 ```text
-CH.result_out   → MaxPool.conv_result
-CH.result_valid → MaxPool.conv_valid
+CH.result_out   → CH_Result_Buffer.conv_result
+CH.result_valid → CH_Result_Buffer.conv_valid
 ```
 
 ## 3. 데이터 형식
@@ -315,20 +315,125 @@ w_sel=0 → Mem A Write, Mem B Read
 w_sel=1 → Mem B Write, Mem A Read
 ```
 
-기존 `pingpongBuffer`의 기본 파라미터:
+CNN 가속기에서 사용하는 Feature Data 폭:
 
 ```systemverilog
 parameter ADDR_WIDTH = 128 * 128;
-parameter DATA_WIDTH = 12;
+parameter DATA_WIDTH = 8;
 ```
 
 `ADDR_WIDTH`는 실제로 주소 비트 폭이 아니라 메모리 깊이를 의미하므로 이후 `DEPTH`로 이름을 변경하는 것을 고려한다.
 
-Data Buffer에서 읽은 Pixel 스트림은 Shift/Window Buffer를 거쳐 `3×3 Pixel Window`로 변환되어 CH 8개에 공통 전달된다.
+외부 Data Buffer는 동기식 Read 방식이다. CNN이 `rAddr`를 출력하면 다음 클록에 해당 위치의 `rData`가 들어온다. 읽은 Pixel은 내부 레지스터와 Shift/Window Buffer를 거쳐 `3×3 Pixel Window`로 변환되어 CH 8개에 공통 전달된다.
+
+CNN과 Ping-pong Buffer 사이의 주요 신호는 다음과 같다.
+
+| 신호 | 방향 | 의미 |
+|---|---|---|
+| `w_sel` | CNN → Buffer | Write Bank 선택, 반대 Bank가 Read Bank |
+| `we` | CNN → Buffer | 결과 데이터 쓰기 허용 |
+| `wAddr` | CNN → Buffer | 결과 데이터 저장 주소 |
+| `wData` | CNN → Buffer | 저장할 signed 8-bit 결과 |
+| `rAddr` | CNN → Buffer | 입력 Feature 읽기 주소 |
+| `rData` | Buffer → CNN | 요청 주소에 대한 입력 Feature |
 
 `wclk`과 `rclk`이 다른 클록이면 Bank 선택 및 완료 신호에 CDC 처리가 필요하다. Bank 전환은 현재 Bank의 사용 완료와 반대쪽 Bank의 로딩 완료가 모두 확인된 후 수행해야 한다.
 
-## 10. 2×2 Max Pool과 ReLU 순서
+## 10. CH Result Buffer
+
+`CH_Result_Buffer`는 CH Wrapper 뒤에 위치한다. 별도의 출력 MUX를 사용하지 않고, 네 Convolution 위치의 결과를 내부 메모리에 저장한 다음 설정된 모드에 맞는 데이터만 외부 Data Buffer로 순차 출력한다.
+
+```systemverilog
+logic signed [DATA_WIDTH-1:0]
+    conv_mem [0:3][0:NUM_CH-1];
+```
+
+첫 번째 인덱스는 2×2 영역 안의 위치이고, 두 번째 인덱스는 출력 채널이다.
+
+| `conv_mem` 위치 | 2×2 좌표 |
+|---:|---|
+| `0` | 좌상 `[0,0]` |
+| `1` | 우상 `[0,1]` |
+| `2` | 좌하 `[1,0]` |
+| `3` | 우하 `[1,1]` |
+
+CH 8개의 `conv_valid`가 모두 1인 클록에 해당 위치의 결과 8개를 동시에 저장한다. 네 위치를 모두 받은 뒤 `CAPTURE_RESULTS`에서 `OUTPUT_RESULTS` 상태로 이동한다.
+
+### 동작 모드
+
+모드는 두 제어 신호를 묶어서 해석하면 된다.
+
+```systemverilog
+mode = {MaxPool_en, Relu_en};
+```
+
+| Mode | `MaxPool_en` | `Relu_en` | 처리 | 2×2 영역당 출력 수 (`NUM_CH=8`) |
+|:---:|:---:|:---:|---|---:|
+| `00` | 0 | 0 | Convolution 결과를 그대로 출력 | `4×8 = 32` |
+| `01` | 0 | 1 | 각 Convolution 결과에 ReLU 후 출력 | `4×8 = 32` |
+| `10` | 1 | 0 | 채널별 네 값 중 최댓값을 출력 | `8` |
+| `11` | 1 | 1 | 채널별 MaxPool 후 ReLU하여 출력 | `8` |
+
+#### `00`: MaxPool 없음, ReLU 없음
+
+네 위치의 signed Convolution 결과를 변경하지 않고 모두 출력한다. 음수도 그대로 유지된다.
+
+```text
+-5, 3, -1, 2 → -5, 3, -1, 2
+```
+
+출력 순서는 위치 우선, 그 안에서 채널 순서이다.
+
+```text
+위치 0: CH0, CH1, ... CH7
+위치 1: CH0, CH1, ... CH7
+위치 2: CH0, CH1, ... CH7
+위치 3: CH0, CH1, ... CH7
+```
+
+#### `01`: MaxPool 없음, ReLU 사용
+
+네 위치를 모두 유지하되 각각의 음수를 0으로 바꿔 출력한다.
+
+```text
+-5, 3, -1, 2 → 0, 3, 0, 2
+```
+
+#### `10`: MaxPool 사용, ReLU 없음
+
+각 채널의 네 위치 중 signed 최댓값 하나만 출력한다.
+
+```text
+-5, 3, -1, 2 → max = 3
+-8, -2, -6, -4 → max = -2
+```
+
+ReLU가 꺼져 있으므로 최댓값이 음수이면 음수 상태로 출력한다.
+
+#### `11`: MaxPool 사용, ReLU 사용
+
+채널별 signed 최댓값을 구한 뒤 음수이면 0으로 출력한다.
+
+```text
+-5, 3, -1, 2 → max = 3  → ReLU = 3
+-8, -2, -6, -4 → max = -2 → ReLU = 0
+```
+
+MaxPool 사용 시 출력 순서는 `CH0 → CH1 → ... → CH7`이며, 채널마다 한 값만 출력한다.
+
+### 출력 Handshake
+
+결과는 다음 조건에서만 실제로 외부 Data Buffer에 전달된 것으로 처리한다.
+
+```systemverilog
+output_fire = output_valid && output_ready;
+```
+
+`output_ready=0`이면 현재 `output_data`와 인덱스를 유지한다. 마지막 데이터의 Handshake가 성립한 클록에만 `output_done`이 발생하고 다음 2×2 결과를 받을 준비를 한다. 따라서 쓰기 측이 잠시 멈추더라도 데이터가 누락되지 않는다.
+
+기존 `Output_Mux`, `MaxPool_wrapper`, `MaxPool_2x2` 소스는 비교와 참고를 위해 남아 있지만 현재 CNN 데이터 경로에는 인스턴스되지 않는다.
+
+## 11. 2×2 좌표 처리 순서
 
 각 출력 채널에서 다음 네 좌표의 Convolution 결과를 계산한다.
 
@@ -353,30 +458,20 @@ CH 결과 [0,1]
 CH 결과 [1,0]
 CH 결과 [1,1]
         ↓
-채널별 2×2 Max Pool
+CH_Result_Buffer에 네 위치 저장
         ↓
-Pooled 결과 저장
-        ↓
-전체 결과 저장 완료 후 ReLU
+설정 모드(00/01/10/11)에 따라 출력
 ```
 
-CH 8개의 출력 채널마다 별도의 signed 최대값을 유지해야 한다.
-
-```systemverilog
-logic signed [7:0] current_max [0:7];
-```
-
-네 값이 모두 음수인 경우에도 올바른 최댓값을 선택할 수 있도록 signed 비교를 사용해야 한다.
-
-Conv Controller가 다음 좌표 순서를 보장하는 경우 Max Pool은 카운터와 최대값 레지스터로 구현할 수 있다.
+Conv Controller는 다음 좌표 순서를 보장한다.
 
 ```text
 [0,0] → [0,1] → [1,0] → [1,1]
 ```
 
-일반적인 Raster Scan 순서로 결과가 출력된다면 단순히 연속된 결과 네 개를 비교하면 안 되며, Max Pool에 행 저장용 Line Buffer가 필요하다.
+현재 구조는 이 네 위치를 하나의 처리 묶음으로 사용한다. 일반적인 Raster Scan 결과를 임의로 네 개씩 묶는 구조가 아니다.
 
-## 11. 병렬 입력과 순차 입력
+## 12. 병렬 입력과 순차 입력
 
 현재 CH는 Pixel 9개와 Weight 9개를 병렬로 입력받는다.
 
@@ -396,9 +491,37 @@ Vivado RTL Schematic에서는 SystemVerilog 배열 포트가 낱개 신호로 �
 
 현재 단계에서는 검증된 CH를 유지하고 Weight Buffer 또는 Wrapper가 64-bit Word를 순차로 받아 내부 레지스터에 저장한 후 CH에 병렬 전달하는 방식을 사용한다.
 
-## 12. 검증 상태
+## 13. Controller 동작
 
-CH RTL과 Self-checking Testbench를 작성하여 Vivado XSim 2020.2에서 다음 항목을 검증했다.
+CNN 상위 제어부는 `start`를 받으면 Conv Controller를 구동하며, 외부에서는 세 신호만으로 작업 상태를 확인할 수 있다.
+
+| 신호 | 방향 | 의미 |
+|---|---|---|
+| `start` | 입력 | CNN 연산 시작 요청 |
+| `busy` | 출력 | 전체 CNN 연산 진행 중 |
+| `done` | 출력 | 전체 연산 완료 Pulse |
+
+Conv Controller의 내부 상태 흐름:
+
+```text
+IDLE
+  ↓ start
+SET_WEIGHT_DATA
+  ↓ Weight/Data 준비 Handshake
+CONV
+  ↓ CH 결과 완료
+POST_PROCESS
+  ↓ CH_Result_Buffer 처리 완료
+PUSH_DATA
+  ↓ 외부 Data Buffer 쓰기 완료
+다음 좌표/채널/Layer 또는 IDLE
+```
+
+CNN 모듈의 외부 Data/Weight 주소 및 유효 신호들은 위 상태기에 의해 내부적으로 제어된다.
+
+## 14. 검증 상태
+
+Self-checking Testbench를 이용해 다음 항목을 검증했다.
 
 - 입력 채널 1개
 - 여러 입력 채널 누적
@@ -406,25 +529,32 @@ CH RTL과 Self-checking Testbench를 작성하여 Vivado XSim 2020.2에서 다�
 - `weight_valid` gating
 - `result_valid` 1클록 Pulse
 - `acc_clear` 우선순위
+- `CH_Result_Buffer`의 `00`, `01`, `10`, `11` 모드
+- MaxPool 사용/미사용 시 출력 개수와 순서
+- 음수 MaxPool 결과와 ReLU 처리
+- Controller의 Pool/Bypass 경로
+- `1 → 32 → 64 → 128` 3-Layer CNN 통합 동작
 
 결과:
 
 ```text
 PASS: all CH tests passed
+PASS: CH_Result_Buffer bypass/pool/ReLU tests passed
+PASS: pooled and bypass Conv_Controller tests passed
+PASS: 1->32->64->128 with L2 MaxPool bypass golden comparison
 ```
 
-현재 상태:
+통합 Testbench의 기본 처리 구성:
 
-- CH RTL 기능 구현 완료
-- CH 단위 Testbench 통과
-- CH Wrapper 작성
-- CH Wrapper 및 전체 시스템 통합 검증 필요
-- Weight Ping-pong Buffer 제어 및 분배 로직 구현 필요
-- 2×2 Max Pool 구현 및 검증 필요
-- ReLU 연결 필요
-- Vivado 합성 후 DSP 사용량과 125 MHz Timing 확인 필요
+```text
+Layer 0: 1   → 32채널, MaxPool + ReLU
+Layer 1: 32  → 64채널, MaxPool + ReLU
+Layer 2: 64  → 128채널, MaxPool Bypass + ReLU
+```
 
-## 13. 주요 RTL 파일
+모든 SystemVerilog Source와 Testbench는 Vivado 2020.2 환경에서 컴파일을 확인했다. 보드 적용 전에는 합성·구현 결과에서 DSP/BRAM 사용량, CDC, 125 MHz Timing을 추가로 확인해야 한다.
+
+## 15. 주요 RTL 파일
 
 ```text
 CH.sv
@@ -433,19 +563,34 @@ CH.sv
 CH_wrapper.sv
     CH 8개 생성 및 공통/개별 신호 배선
 
-CH_tb.sv
-    CH Self-checking Testbench
+CH_Result_Buffer.sv
+    네 위치의 CH 결과 저장, MaxPool/ReLU 선택, 순차 출력
 
+Shift_Buffer.sv
+    외부 Feature 데이터로 3×3 Pixel Window 생성
 
-## 15. 다음 작업
+Conv_Controller.sv
+    Weight/Data 요청, Convolution, 후처리, 결과 쓰기 순서 제어
 
-1. CH Wrapper Testbench 작성
-2. CH 8개의 병렬 결과와 valid 동기화 검증
-3. Weight Ping-pong Buffer의 10-Word 수신 카운터 구현
-4. 64-bit Weight Word를 CH0~CH7로 분리
-5. Weight/Bias 준비 완료 후 `weight_valid` 생성
-6. Data Buffer와 Shift/Window Buffer 연결
-7. 2×2 Max Pool RTL 및 Self-checking Testbench 작성
-8. Pooled Feature Map 저장 후 ReLU 연결
-9. CNN Controller와 전체 데이터 순서 통합
-10. Vivado 합성·구현 및 DSP/BRAM/Timing 분석
+CNN.sv
+    전체 Convolution 데이터 경로와 Layer 순서 통합
+
+tb_CH_Result_Buffer.sv
+    CH Result Buffer 네 모드 Self-checking Testbench
+
+tb_Conv_Controller.sv
+    Pool/Bypass Controller Self-checking Testbench
+
+tb_CNN.sv
+    3-Layer 전체 CNN Golden 비교 Testbench
+```
+
+기존 `Data_Buffer.sv`, `Weight_Buffer.sv`, `Output_Mux.sv`, `MaxPool_wrapper.sv`는 삭제하지 않고 참고용으로 보존한다.
+
+## 16. 다음 작업
+
+1. 외부 64-bit Weight Ping-pong Buffer의 실제 포트와 CNN Weight 요청 포트 최종 통합
+2. 전체 CNN Accelerator 및 FC 블록 연결
+3. Layer별 채널 수와 MaxPool/ReLU 설정 조합 추가 검증
+4. Vivado 합성·구현 후 DSP/BRAM 사용량과 125 MHz Timing 분석
+5. 실제 보드에서 DRAM 데이터 이동과 Bank 전환 검증
