@@ -53,13 +53,3 @@ python pc_webcam_inference_master128.py
 ```
 * 사각형 영역 안에 사람이 들어오면 `Human (Green)` 상태 표시
 * 상단 트랙바(Trackbar)로 임계값(Threshold) 실시간 조절 가능
-
----
-
-## 📦 마스터 데이터셋 다운로드 (Dataset Download)
-* 본 프로젝트 학습에 사용된 6,868장의 마스터 데이터셋(785.7 MB)은 아래 구글 드라이브 링크에서 다운로드할 수 있습니다:
-  👉 [archive_master_128.zip 다운로드 받기](https://drive.google.com/file/d/1noBNuYcCwkuiwg3rOIUkuUPoq55zaQ4J/view?usp=sharing)
-
-### 🏷️ 데이터셋 클래스 라벨 정의 (Class Label Mapping)
-- **`0`**: **배경 / 사람이 없음 (Background / Non-person)** — 3,639장
-- **`1`**: **사람이 있음 (Person / Human)** — 3,229장
