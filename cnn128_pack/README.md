@@ -20,15 +20,23 @@
 
 ## 📁 파일 구성 (File Inventory)
 
-| 파일명 | 설명 |
-| :--- | :--- |
-| **`train_master_128.py`** | 128x128 모델 학습 & INT8 HEX 가중치 자동 추출 스크립트 |
-| **`pc_webcam_inference_master128.py`** | 128x128 모델 PC 실시간 웹캠 추론 스크립트 |
-| **`prepare_dataset_master.py`** | 데이터셋 통합 및 전처리 스크립트 |
-| **`best_model_master128.pth`** | PyTorch 128x128 모델 가중치 파일 (~365KB) |
-| **`training_curves_master128.png`** | 학습 Loss 및 Accuracy 곡선 그래프 이미지 |
-| **`conv1_w.hex ~ fc2_b.hex`** | Verilog BRAM 메모리 초기화용 INT8/INT32 HEX 파일 (10개) |
-| **`VERILOG_SPEC_REPORT.md`** | Verilog 하드웨어 이식 명세 보고서 |
+```text
+github_cnn128_pack/
+├── README.md                           # GitHub 메인 설명 문서
+├── VERILOG_SPEC_REPORT.md              # Verilog 하드웨어 이식 명세 보고서
+├── train_master_128.py                 # 128x128 학습 스크립트
+├── pc_webcam_inference_master128.py    # 128x128 실시간 웹캠 추론 스크립트
+├── prepare_dataset_master.py           # 데이터셋 전처리 스크립트
+├── training_curves_master128.png       # 학습 수렴 곡선 이미지
+│
+└── 📁 weights_and_hex/                  # 가중치 및 HEX 파일 전용 하위 폴더
+    ├── best_model_master128.pth        # 128x128 모델 가중치 (~365KB)
+    ├── conv1_w.hex / conv1_b.hex       # Conv1 가중치 & 바이어스 INT8/32
+    ├── conv2_w.hex / conv2_b.hex       # Conv2 가중치 & 바이어스 INT8/32
+    ├── conv3_w.hex / conv3_b.hex       # Conv3 가중치 & 바이어스 INT8/32
+    ├── fc1_w.hex / fc1_b.hex           # FC1 가중치 (65,536행) & 바이어스 INT8/32
+    └── fc2_w.hex / fc2_b.hex           # FC2 가중치 & 바이어스 INT8/32
+```
 
 ---
 
@@ -45,3 +53,13 @@ python pc_webcam_inference_master128.py
 ```
 * 사각형 영역 안에 사람이 들어오면 `Human (Green)` 상태 표시
 * 상단 트랙바(Trackbar)로 임계값(Threshold) 실시간 조절 가능
+
+---
+
+## 📦 마스터 데이터셋 다운로드 (Dataset Download)
+* 본 프로젝트 학습에 사용된 6,868장의 마스터 데이터셋(785.7 MB)은 아래 구글 드라이브 링크에서 다운로드할 수 있습니다:
+  👉 [archive_master_128.zip 다운로드 받기](https://drive.google.com/file/d/1noBNuYcCwkuiwg3rOIUkuUPoq55zaQ4J/view?usp=sharing)
+
+### 🏷️ 데이터셋 클래스 라벨 정의 (Class Label Mapping)
+- **`0`**: **배경 / 사람이 없음 (Background / Non-person)** — 3,639장
+- **`1`**: **사람이 있음 (Person / Human)** — 3,229장
