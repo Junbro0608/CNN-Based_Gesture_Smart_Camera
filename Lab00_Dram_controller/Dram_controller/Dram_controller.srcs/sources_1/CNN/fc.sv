@@ -8,8 +8,8 @@ module fc #(
     input  logic                               rst_n,
     //CNN ctrl
     input  logic                               start,
-    input  logic [            $clog2(128)-1:0] input_length,
-    input  logic [            $clog2(128)-1:0] output_length,
+    input  logic [           $clog2(1024)-1:0] input_length,
+    input  logic [             $clog2(64)-1:0] output_length,
     output logic                               finish_en,
     output logic                               Done,
     //weight side
@@ -25,5 +25,16 @@ module fc #(
     //result
     output logic                               result
 );
+
+    always_comb begin
+        finish_en  = 1'b0;
+        Done       = 1'b0;
+        wt_raddr   = '0;
+        DATA_we    = 1'b0;
+        DATA_waddr = '0;
+        DATA_wdata = '0;
+        DATA_raddr = '0;
+        result     = 1'b0;
+    end
 
 endmodule

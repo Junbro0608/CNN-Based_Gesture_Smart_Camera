@@ -1,8 +1,10 @@
 module CNN_accelerator #(
     parameter WT_ADDR_WIDTH   = 10 * 128,
     parameter WT_DATA_WIDTH   = 64,
-    parameter DATA_ADDR_WIDTH = 126 * 126 * 16,
-    parameter DATA_DATA_WIDTH = 8
+    parameter DATA_ADDR_WIDTH = 64 * 64 * 16,
+    parameter DATA_DATA_WIDTH = 8,
+    parameter IMG_ADDR_WIDH   = 128,
+    parameter IMG_DATA_WIDH   = DATA_DATA_WIDTH
 ) (
     input logic clk,
     input logic rst_n,
@@ -11,41 +13,122 @@ module CNN_accelerator #(
     output logic busy,
     output logic result,
     //push img
-    output logic img_raddr,
-    input logic img_rdata,
+    output logic [$clog2(IMG_ADDR_WIDH*IMG_ADDR_WIDH)-1:0] img_raddr,
+    input logic signed [IMG_DATA_WIDH-1:0] img_rdata,
+    //dram
     output logic [71:0] s_axis_mms2s_cmd_tdata,  // 명령어 tdata
     input logic s_axis_mms2s_cmd_tready,  // 명령어 tready
     output logic s_axis_mms2s_cmd_tvalid,  // 명령어 tvalid
-    input logic [63:0] s_axis_mm2s_tdata,  //rdata push data
+    input logic signed [63:0] s_axis_mm2s_tdata,  //rdata push data
     input  logic [ 7:0] s_axis_mm2s_tkeep,        //rdata 64비트(8바이트) 중에서 몇 번째 바이트가 유효한지*무시*
     input logic s_axis_mm2s_tlast,  //rdata 마지막 데이터라는 신호
     output logic s_axis_mm2s_tready,  //rdata tready
     input logic s_axis_mm2s_tvalid  //rdata push done
 );
-    logic [1:0] mux_sel;
+    logic                                      CONVFC_mux_sel;
+
+    // Controller <-> conv/fc
+    logic                                      conv_start;
+    logic                                      conv_conv_en;
+    logic                                      conv_Relu_en;
+    logic                                      conv_MaxPool_en;
+    logic        [            $clog2(128)-1:0] conv_input_channel;
+    logic        [            $clog2(128)-1:0] conv_output_channel;
+    logic                                      conv_Done;
+
+    logic                                      fc_start;
+    logic                                      fc_finish_en;
+    logic        [           $clog2(1024)-1:0] fc_input_length;
+    logic        [             $clog2(64)-1:0] fc_output_length;
+    logic                                      fc_Done;
+
+    logic                                      Data_mem_sel;
+    logic                                      dram_move_start;
+    logic                                      dram_move_Done;
+
+    // conv/fc <-> weight buffer
+    logic        [  $clog2(WT_ADDR_WIDTH)-1:0] conv_WT_raddr;
+    logic signed [          WT_DATA_WIDTH-1:0] conv_WT_rdata;
+    logic        [  $clog2(WT_ADDR_WIDTH)-1:0] fc_WT_raddr;
+    logic signed [          WT_DATA_WIDTH-1:0] fc_WT_rdata;
+
+    // conv/fc <-> data buffer
+    logic                                      conv_DATA_we;
+    logic        [$clog2(DATA_ADDR_WIDTH)-1:0] conv_DATA_waddr;
+    logic signed [        DATA_DATA_WIDTH-1:0] conv_DATA_wdata;
+    logic        [$clog2(DATA_ADDR_WIDTH)-1:0] conv_DATA_raddr;
+    logic signed [        DATA_DATA_WIDTH-1:0] conv_DATA_rdata;
+
+    logic                                      fc_DATA_we;
+    logic        [$clog2(DATA_ADDR_WIDTH)-1:0] fc_DATA_waddr;
+    logic signed [        DATA_DATA_WIDTH-1:0] fc_DATA_wdata;
+    logic        [$clog2(DATA_ADDR_WIDTH)-1:0] fc_DATA_raddr;
+    logic signed [        DATA_DATA_WIDTH-1:0] fc_DATA_rdata;
+
+    // padding control
+    logic        [$clog2(DATA_ADDR_WIDTH)-1:0] padding_size;
+    logic                                      padding_en;
+    logic                                      img_MUX_sel;
+    logic        [$clog2(DATA_ADDR_WIDTH)-1:0] DATA_raddr;
+    logic        [$clog2(DATA_ADDR_WIDTH)-1:0] padding_DATA_raddr;
+
+    // DRAM push image path
+    logic                                      img_we;
+    logic        [$clog2(DATA_ADDR_WIDTH)-1:0] img_waddr;
+    logic signed [        DATA_DATA_WIDTH-1:0] img_wdata;
+
+    // write/read mux signals
+    logic                                      mux_we;
+    logic        [$clog2(DATA_ADDR_WIDTH)-1:0] mux_waddr;
+    logic signed [        DATA_DATA_WIDTH-1:0] mux_wdata;
+    logic        [$clog2(DATA_ADDR_WIDTH)-1:0] mux_raddr;
+
+    // Typo-compatibility aliases used in existing instance connections
+    logic        [$clog2(DATA_ADDR_WIDTH)-1:0] mux_wAddr;
+    logic signed [        DATA_DATA_WIDTH-1:0] mux_wData;
+    logic                                      DATA_w_sel;
+    logic signed [        DATA_DATA_WIDTH-1:0] DATA_rData;
+
+    assign mux_wAddr = mux_waddr;
+    assign mux_wData = mux_wdata;
+    assign DATA_w_sel = Data_mem_sel;
+    assign conv_DATA_rdata = DATA_rData;
+    assign fc_DATA_rdata = DATA_rData;
+
+    // Weight ping-pong control path
+    logic pingpong_W_sel;
+    logic WT_we;
+    logic [$clog2(WT_ADDR_WIDTH)-1:0] WT_wAddr;
+    logic signed [WT_DATA_WIDTH-1:0] WT_wData;
+    logic [$clog2(WT_ADDR_WIDTH)-1:0] WT_rAddr;
+    logic signed [WT_DATA_WIDTH-1:0] WT_rData;
 
     CNN_acc_controller U_CNN_acc_controller (
-        .clk               (clk),
-        .rst_n             (rst_n),
+        .clk             (clk),
+        .rst_n           (rst_n),
         //conv_ctrl
-        .cnn_start         (conv_start),
-        .cnn_Relu_en       (conv_Relu_en),
-        .cnn_MaxPool_en    (conv_MaxPool_en),
-        .cnn_input_channel (conv_input_channel),
-        .cnn_output_channel(conv_output_channel),
-        .cnn_Done          (conv_Done),
+        .conv_start      (conv_start),
+        .conv_conv_en    (conv_conv_en),
+        .conv_Relu_en    (conv_Relu_en),
+        .conv_MaxPool_en (conv_MaxPool_en),
+        .cnn_Done        (conv_Done),
         //fc_ctrl
-        .fc_start          (fc_start),
-        .fc_input_length   (fc_input_length),
-        .fc_output_length  (fc_output_length),
-        .fc_Done           (fc_Done),
-        //Datamem_ctrl
-        .DATA_w_sel      (Data_mem_sel),
-        .mux_sel           (mux_sel),
-        .DataMover_start   (DataMover_start),
+        .fc_start        (fc_start),
+        .fc_finish_en    (fc_finish_en),
+        .fc_input_length (fc_input_length),
+        .fc_output_length(fc_output_length),
+        .fc_Done         (fc_Done),
+        //weight_Move_ctrl
+        .dram_move_start (dram_move_start),
+        .dram_move_Done  (dram_move_Done),
+        //Mem_ctrl
+        .img_MUX_sel     (img_MUX_sel),
+        .CONVFC_MUX_sel  (CONVFC_mux_sel),
+        .pingpong_W_sel  (pingpong_W_sel),    //0 : A write 1 : B write 메모리로 선언
         //outside
-        .done              (done),
-        .busy              (busy)
+        .cnn_start       (start),
+        .Done            (done),
+        .busy            (busy)
     );
 
     //-----------------------------연산---------------------------------
@@ -65,8 +148,8 @@ module CNN_accelerator #(
         .output_channel(conv_output_channel),
         .Done          (conv_Done),
         //weight side
-        .wt_raddr      (conv_wt_raddr),
-        .wt_rdata      (conv_wt_rdata),
+        .wt_raddr      (conv_WT_raddr),
+        .wt_rdata      (conv_WT_rdata),
         //Data Load
         .DATA_we       (conv_DATA_we),
         .DATA_waddr    (conv_DATA_waddr),
@@ -90,8 +173,8 @@ module CNN_accelerator #(
         .output_length(fc_output_length),
         .Done         (fc_Done),
         //weight side
-        .wt_raddr     (fc_Done),
-        .wt_rdata     (fc_Done),
+        .wt_raddr     (fc_WT_raddr),
+        .wt_rdata     (fc_WT_rdata),
         //Data Load
         .DATA_we      (fc_DATA_we),
         .DATA_waddr   (fc_DATA_waddr),
@@ -105,40 +188,42 @@ module CNN_accelerator #(
 
     //--------------------------Memory------------------------------------------
     //DataBuffer - WriteMux
-    mux3 #(
-        .WIDTH(1)
-    ) U_we2DataBuf_MUX (
-        .in0(conv_DATA_we),
-        .in1(fc_DATA_we),
-        .in2(img_we),
-        .sel(mux_sel),
-        .out(mux_we)
+    mux2 #(
+        .WIDTH(1 + $clog2(DATA_ADDR_WIDTH) + DATA_DATA_WIDTH)
+    ) U_wwrite2DataBuf_MUX (
+        .in0({conv_DATA_we, conv_DATA_waddr, conv_DATA_wdata}),
+        .in1({fc_DATA_we, fc_DATA_waddr, fc_DATA_wdata}),
+        .sel(CONVFC_mux_sel),
+        .out({mux_we, mux_waddr, mux_wdata})
     );
-    mux3 #(
-        .WIDTH($clog2(DATA_ADDR_WIDTH))
-    ) U_waddr2DataBuf_MUX (
-        .in0(conv_DATA_waddr),
-        .in1(fc_DATA_waddr),
-        .in2(img_waddr),
-        .sel(mux_sel),
-        .out(mux_waddr)
+
+    padding #(
+        .DATA_ADDR_WIDTH(DATA_ADDR_WIDTH),
+        .DATA_DATA_WIDTH(DATA_DATA_WIDTH),
+        .IMG_ADDR_WIDH  (128),
+        .IMG_DATA_WIDH  (DATA_DATA_WIDTH)
+    ) U_padding (
+        .padding_size(padding_size),  // 패딩 전 사이즈: 128/64/32
+        .img_MUX_sel (img_MUX_sel),
+        .padding_en  (padding_en),
+        //conv io
+        .conv_raddr  (conv_DATA_raddr),  // conv read addr
+        .conv_rdata  (conv_DATA_rdata),  // conv read data
+        //data_mem
+        .data_raddr  (padding_DATA_raddr),
+        .data_rdata  (DATA_rData),
+        //img_mem
+        .img_raddr   (img_raddr),
+        .img_rdata   (img_rdata)
     );
-    mux3 #(
-        .WIDTH(DATA_DATA_WIDTH)
-    ) U_wdata2DataBuf_MUX (
-        .in0(conv_DATA_wdata),
-        .in1(fc_DATA_wdata),
-        .in2(img_wdata),
-        .sel(mux_sel),
-        .out(mux_wdata)
-    );
+
     // Data Buffer Raddr
     mux2 #(
         .WIDTH($clog2(DATA_ADDR_WIDTH))
-    ) U_raddr2DataBuf_MUX (
-        .in0(conv_DATA_raddr),
+    ) U_raddr2WTBuf_MUX (
+        .in0(padding_DATA_raddr),
         .in1(fc_DATA_raddr),
-        .sel(mux_sel[0]),
+        .sel(CONVFC_mux_sel),
         .out(mux_raddr)
     );
 
@@ -148,7 +233,7 @@ module CNN_accelerator #(
         .DATA_WIDTH(DATA_DATA_WIDTH)
     ) U_Data_Buffer (
         //buffer ctrl
-        .w_sel(DATA_w_sel),
+        .w_sel(pingpong_W_sel),
         //write
         .wclk (clk),
         .we   (mux_we),
@@ -160,24 +245,28 @@ module CNN_accelerator #(
         .rData(DATA_rData)
     );
 
-    dram_controller u_dram_controller (
-        .clk(clk),
-        .rst_n(rst_n),
-        .DataMover_start(DataMover_start),
-        .s_axis_mms2s_cmd_tdata(s_axis_mms2s_cmd_tdata),
-        .s_axis_mms2s_cmd_tready(s_axis_mms2s_cmd_tready),
-        .s_axis_mms2s_cmd_tvalid(s_axis_mms2s_cmd_tvalid),
-        .s_axis_mms2s_cmd_tdata(s_axis_mms2s_cmd_tdata),  // 명령어 tdata
-        .s_axis_mms2s_cmd_tready(s_axis_mms2s_cmd_tready),  // 명령어 tready
-        .s_axis_mms2s_cmd_tvalid(s_axis_mms2s_cmd_tvalid),  // 명령어 tvalid
-        .s_axis_mms2s_tdata(s_axis_mms2s_tdata),  // 명령어 tdata
-        .s_axis_mms2s_tready(s_axis_mms2s_tready),  // 명령어 tready
-        .s_axis_mms2s_tvalid(s_axis_mms2s_tvalid),  // 명령어 tvalid
-        .s_axis_mm2s_tdata(s_axis_mm2s_tdata),  //rdata push data
-        .s_axis_mm2s_tlast(s_axis_mm2s_tlast),  //rdata 마지막 데이터라는 신호
-        .s_axis_mm2s_tready(s_axis_mm2s_tready),  //rdata tready
-        .s_axis_mm2s_tvalid(s_axis_mm2s_tvalid)  //rdata push done
+    //-----------------------------weigth----------------------
+    mux2 #(
+        .WIDTH($clog2(WT_ADDR_WIDTH) + WT_DATA_WIDTH)
+    ) U_weigth_raddr_MUX (
+        .in0({conv_WT_raddr, conv_WT_rdata}),
+        .in1({fc_WT_raddr, fc_WT_rdata}),
+        .sel(CONVFC_mux_sel),
+        .out({WT_rAddr, WT_rData})
     );
+
+    dram_controller u_dram_controller (
+        .clk              (clk),
+        .rst_n            (rst_n),
+        .start_req        (dram_move_start),
+        .sys_addr         (32'h1000_0000),
+        .sys_btt          (23'd8),
+        .m_axis_cmd_tdata (s_axis_mms2s_cmd_tdata),
+        .m_axis_cmd_tvalid(s_axis_mms2s_cmd_tvalid),
+        .m_axis_cmd_tready(s_axis_mms2s_cmd_tready)
+    );
+
+    assign dram_move_Done = s_axis_mm2s_tlast & s_axis_mm2s_tvalid & s_axis_mm2s_tready;
 
     //Weigth(20,480 bytes)
     pingpongBuffer #(
@@ -185,7 +274,7 @@ module CNN_accelerator #(
         .DATA_WIDTH(WT_DATA_WIDTH)
     ) U_wight_Buffer (
         //buffer ctrl
-        .w_sel(WT_w_sel),
+        .w_sel(pingpong_W_sel),
         //write
         .wclk (clk),
         .we   (WT_we),

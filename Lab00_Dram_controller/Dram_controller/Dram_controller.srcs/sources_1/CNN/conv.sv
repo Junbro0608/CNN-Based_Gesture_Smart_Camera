@@ -25,5 +25,13 @@ module conv #(
     input  logic [        DATA_DATA_WIDTH-1:0] DATA_rdata
 );
 
+    always_comb begin
+        Done      = 1'b0;
+        wt_raddr  = '0;
+        DATA_we   = 1'b0;
+        DATA_waddr = '0;
+        DATA_wdata = '0;
+        DATA_raddr = '0;
+    end
 
 endmodule
