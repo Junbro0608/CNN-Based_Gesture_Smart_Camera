@@ -24,7 +24,7 @@ module CH_Result_Buffer #(
     input  logic [NUM_CH-1:0]            conv_valid,
     output logic [NUM_CH-1:0]            conv_ready,
 
-    output logic [DATA_WIDTH-1:0]         output_data,
+    output logic signed [DATA_WIDTH-1:0]  output_data,
     output logic                          output_valid,
     input  logic                          output_ready,
     output logic [CH_INDEX_WIDTH-1:0]     output_channel,

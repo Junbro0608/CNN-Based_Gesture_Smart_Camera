@@ -4,14 +4,17 @@
 //
 // Packet layout (one word per AXI-Stream handshake):
 //   word 0..8 : kernel position 0..8 for CH0..CH(NUM_CH-1)
-//   word 9    : bias for CH0..CH(NUM_CH-1)
+//   word 9    : bias bits [7:0]   for CH0..CH(NUM_CH-1)
+//   word 10   : bias bits [15:8]  for CH0..CH(NUM_CH-1)
+//   word 11   : bias bits [23:16] for CH0..CH(NUM_CH-1)
+//   word 12   : bias bits [31:24] for CH0..CH(NUM_CH-1)
 //
 // Byte layout in every word:
 //   bits [ 7: 0] : CH0
 //   bits [15: 8] : CH1
 //   ...
 //
-// weight_valid remains high after all ten words have been captured. It is
+// weight_valid remains high after all thirteen words have been captured. It is
 // cleared when a new load_start is accepted. This lets CH_wrapper reuse the
 // stored weights whenever a pixel window becomes valid.
 module Weight_Buffer #(
@@ -42,11 +45,13 @@ module Weight_Buffer #(
 
     // CH_wrapper interface
     output logic signed [7:0] weight_out [0:NUM_CH-1][0:8],
-    output logic signed [7:0] bias_out   [0:NUM_CH-1]
+    output logic signed [31:0] bias_out  [0:NUM_CH-1]
 );
 
     localparam integer NUM_KERNEL_WORDS = 9;
-    localparam integer NUM_PACKET_WORDS = 10;
+    localparam integer NUM_BIAS_WORDS   = 4;
+    localparam integer NUM_PACKET_WORDS =
+        NUM_KERNEL_WORDS + NUM_BIAS_WORDS;
     logic [3:0] word_index;
     logic       stream_fire;
 
@@ -68,7 +73,7 @@ module Weight_Buffer #(
             request_addr  <= '0;
 
             for (ch = 0; ch < NUM_CH; ch = ch + 1) begin
-                bias_out[ch] <= 8'sd0;
+                bias_out[ch] <= 32'sd0;
                 for (kernel = 0; kernel < NUM_KERNEL_WORDS;
                      kernel = kernel + 1) begin
                     weight_out[ch][kernel] <= 8'sd0;
@@ -96,18 +101,19 @@ module Weight_Buffer #(
                     end
                     end else begin
                         for (ch = 0; ch < NUM_CH; ch = ch + 1) begin
-                            bias_out[ch] <=
-                                $signed(s_axis_weight_tdata[ch*8 +: 8]);
+                            bias_out[ch][
+                                (word_index-NUM_KERNEL_WORDS)*8 +: 8
+                            ] <= s_axis_weight_tdata[ch*8 +: 8];
                         end
                     end
 
                     if (word_index == NUM_PACKET_WORDS-1) begin
-                    // The tenth beat must also be the final AXI beat.
+                    // The thirteenth beat must also be the final AXI beat.
                     packet_error <= !s_axis_weight_tlast;
                     busy         <= 1'b0;
                     weight_valid <= s_axis_weight_tlast;
                     end else if (s_axis_weight_tlast) begin
-                    // Reject a packet that terminates before all ten words.
+                    // Reject a packet that terminates before all 13 words.
                     packet_error <= 1'b1;
                     busy         <= 1'b0;
                     weight_valid <= 1'b0;

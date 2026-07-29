@@ -17,12 +17,12 @@ module CH_wrapper #(
     input  logic       pixel_valid,
     output logic       pixel_ready,
     input  logic [1:0] window_index,
-    input  logic [7:0] pixel_in [0:8],
+    input  logic signed [7:0] pixel_in [0:8],
 
     // One 3x3 kernel and one bias for each CH.
     input  logic                       weight_valid,
     input  logic signed [7:0]          weight_in [0:NUM_CH-1][0:8],
-    input  logic signed [7:0]          bias_in   [0:NUM_CH-1],
+    input  logic signed [31:0]         bias_in   [0:NUM_CH-1],
 
     // One convolution result and valid pulse from each CH.
     output logic signed [7:0]          result_out   [0:NUM_CH-1],

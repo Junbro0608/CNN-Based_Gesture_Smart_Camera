@@ -28,12 +28,12 @@ module Shift_Buffer #(
 
     // Data_Buffer input stream. A pixel is accepted only on
     // pixel_valid && pixel_ready.
-    input  logic [PIXEL_WIDTH-1:0] pixel_data,
+    input  logic signed [PIXEL_WIDTH-1:0] pixel_data,
     input  logic                   pixel_valid,
     output logic                   pixel_ready,
 
     // CH_wrapper interface.
-    output logic [PIXEL_WIDTH-1:0] pixel_window [0:8],
+    output logic signed [PIXEL_WIDTH-1:0] pixel_window [0:8],
     output logic                   window_valid,
     input  logic                   window_ready,
     output logic [1:0]             window_index,
@@ -51,7 +51,7 @@ module Shift_Buffer #(
 
     state_t state;
 
-    logic [PIXEL_WIDTH-1:0] tile_mem [0:TILE_PIXELS-1];
+    logic signed [PIXEL_WIDTH-1:0] tile_mem [0:TILE_PIXELS-1];
     logic [4:0] capture_count;
     logic [1:0] output_count;
     logic       pixel_fire;

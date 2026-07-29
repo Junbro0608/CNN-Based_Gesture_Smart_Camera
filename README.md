@@ -3,6 +3,10 @@
 Zynq FPGA에서 CNN의 Convolution 연산을 가속하기 위한 RTL 프로젝트이다.  
 하나의 Convolution Engine을 Layer별로 순차 재사용하며, 내부에 CH 연산기 8개를 병렬 배치하여 출력 채널 8개를 동시에 계산한다.
 
+## 작업 일지
+
+- [2026.07.29 — CNN 통합, 파라미터/FSM/모듈 연결 및 검증 기록](FinalProject_Conv_CH/docs/2026.07.29.md)
+
 ## 1. 전체 CNN 구성
 
 - Layer 수와 출력 채널 수를 파라미터로 설정 가능
@@ -17,9 +21,29 @@ Zynq FPGA에서 CNN의 Convolution 연산을 가속하기 위한 RTL 프로젝�
 
 ```systemverilog
 parameter integer NUM_LAYERS = 3;
-parameter integer LAYER0_OUTPUT_CHANNELS = 32;
-parameter integer LAYER1_OUTPUT_CHANNELS = 64;
-parameter integer LAYER2_OUTPUT_CHANNELS = 128;
+parameter integer INPUT_WIDTH = 128;
+parameter integer INPUT_HEIGHT = 128;
+parameter integer LAYER0_OUTPUT_CHANNELS = 16;
+parameter integer LAYER1_OUTPUT_CHANNELS = 32;
+parameter integer LAYER2_OUTPUT_CHANNELS = 64;
+```
+
+`INPUT_WIDTH`와 `INPUT_HEIGHT`는 Padding 전 논리 영상 크기이다. 외부
+버퍼가 각 Conv 입력에 한 픽셀 Zero Padding을 포함해 제공하므로 CNN은
+Layer별 실제 입력 크기를 자동 계산한다.
+
+| 논리 입력 | Layer 1 실제 입력 | Layer 2 실제 입력 | Layer 3 실제 입력 |
+|---:|---:|---:|---:|
+| `128×128` | `130×130` | `66×66` | `34×34` |
+| `64×64` | `66×66` | `34×34` | `18×18` |
+
+Top에서는 논리 크기만 지정한다.
+
+```systemverilog
+CNN #(
+    .INPUT_WIDTH (128),
+    .INPUT_HEIGHT(128)
+) U_CNN (...);
 ```
 
 예시:
@@ -84,7 +108,7 @@ CH의 처리 순서는 다음과 같다.
 4. 마지막 입력 채널에서 Bias를 한 번 추가
 5. 최종 결과를 `OUTPUT_SHIFT`만큼 산술 오른쪽 Shift
 6. Shift 결과의 8-bit를 `result_out`으로 출력
-7. 새로운 결과가 출력되는 클록에 `result_valid`를 1클록 동안 발생
+7. 새로운 결과가 완성되면 `result_valid`를 올리고 `result_ready`까지 유지
 
 ### CH 입력
 
@@ -102,7 +126,7 @@ input logic [7:0] pixel_in [0:8];
 
 input logic              weight_valid;
 input logic signed [7:0] weight_in [0:8];
-input logic signed [7:0] bias_in;
+input logic signed [31:0] bias_in;
 ```
 
 ### CH 출력
@@ -123,10 +147,10 @@ CH.result_valid → CH_Result_Buffer.conv_valid
 
 | 데이터 | 형식 | 범위 또는 용도 |
 |---|---|---|
-| Pixel | unsigned 8-bit | `0~255` |
+| Pixel/Feature | signed 8-bit | `-128~127` |
 | Weight | signed 8-bit | `-128~127` |
-| Bias | signed 8-bit | `-128~127` |
-| Pixel 내부 변환 | signed 9-bit | 앞에 `0` 추가 |
+| Bias | signed 32-bit | `-2,147,483,648~2,147,483,647` |
+| Pixel 내부 변환 | signed 9-bit | 부호 확장 |
 | Weight 내부 변환 | signed 9-bit | 부호 확장 |
 | Product | signed 18-bit | signed 9-bit × signed 9-bit |
 | `conv_sum` | signed 32-bit | 한 입력 채널의 3×3 결과 |
@@ -134,13 +158,13 @@ CH.result_valid → CH_Result_Buffer.conv_valid
 | `full_result` | signed 32-bit | 전체 누적 결과 + Bias |
 | `result_out` | signed 8-bit | Shift 후 절삭 결과 |
 
-Pixel 255가 signed 연산에서 `-1`로 해석되지 않도록 앞에 `0`을 추가한다.
+Pixel과 Feature는 signed 8-bit이므로 CH 내부에서 부호 Bit를 복사해 signed 9-bit로 확장한다.
 
 ```systemverilog
-pixel_signed[i] = $signed({1'b0, pixel_in[i]});
+pixel_signed[i] = $signed({pixel_in[i][7], pixel_in[i]});
 ```
 
-Weight는 부호를 유지한 채 signed 9-bit로 확장한다.
+Weight도 같은 방식으로 부호를 유지한 채 signed 9-bit로 확장한다.
 
 ```systemverilog
 weight_signed[i] = $signed({weight_in[i][7], weight_in[i]});
@@ -291,29 +315,32 @@ weight_word[55:48] → CH6
 weight_word[63:56] → CH7
 ```
 
-한 Weight 묶음은 총 10 Word이다.
+한 Weight 묶음은 총 13 Word이다. Weight Stream 폭은 64-bit이므로 각 채널의 32-bit Bias는 하위 Byte부터 네 Word에 나누어 전달한다.
 
 ```text
 Read 0 → Kernel 위치 0의 CH0~CH7 Weight
 Read 1 → Kernel 위치 1의 CH0~CH7 Weight
 ...
 Read 8 → Kernel 위치 8의 CH0~CH7 Weight
-Read 9 → CH0~CH7 Bias
+Read 9  → CH0~CH7 Bias bits `[7:0]`
+Read 10 → CH0~CH7 Bias bits `[15:8]`
+Read 11 → CH0~CH7 Bias bits `[23:16]`
+Read 12 → CH0~CH7 Bias bits `[31:24]`
 ```
 
 전체 크기:
 
 ```text
-9 Weight Word + 1 Bias Word
-= 10 Word
-= 80byte
+9 Weight Word + 4 Bias Word
+= 13 Word
+= 104 byte
 ```
 
 현재 Word가 Weight인지 Bias인지는 데이터 비트가 아니라 실제로 수신한 Word의 순서를 세는 카운터로 판단한다.
 
 ```text
 read_count 0~8 → Weight
-read_count 9   → Bias
+read_count 9~12 → 32-bit Bias의 Byte 0~3
 ```
 
 AXI Stream을 사용할 경우 카운터는 실제 Handshake가 성립했을 때만 증가해야 한다.
@@ -322,7 +349,7 @@ AXI Stream을 사용할 경우 카운터는 실제 Handshake가 성립했을 때
 stream_fire = tvalid && tready;
 ```
 
-10개 Word가 모두 준비된 후 CH별 Weight 9개와 Bias 하나를 동시에 전달하고 `weight_valid`를 발생시킨다.
+13개 Word가 모두 준비된 후 CH별 Weight 9개와 signed 32-bit Bias 하나를 동시에 전달하고 `weight_valid`를 발생시킨다.
 
 CH는 Weight가 Mem A에서 왔는지 Mem B에서 왔는지 알 필요가 없다.
 
@@ -335,16 +362,34 @@ w_sel=0 → Mem A Write, Mem B Read
 w_sel=1 → Mem B Write, Mem A Read
 ```
 
-CNN 가속기에서 사용하는 Feature Data 폭:
+CNN 가속기에서 사용하는 Feature Data는 signed 8-bit이다.
 
 ```systemverilog
 parameter ADDR_WIDTH = 128 * 128;
 parameter DATA_WIDTH = 8;
 ```
 
+일반적인 8-bit Grayscale 영상의 원래 범위는 `0~255`이므로 CNN 입력 메모리에 넣기 전에 다음과 같이 signed 범위로 변환해야 한다.
+
+```text
+signed_pixel = grayscale_pixel - 128
+```
+
+예를 들어 Grayscale `0`, `128`, `255`는 각각 signed 값 `-128`, `0`, `127`로 저장한다. 실제 메모리에는 8-bit 2의 보수 Bit Pattern이 기록된다.
+
 `ADDR_WIDTH`는 실제로 주소 비트 폭이 아니라 메모리 깊이를 의미하므로 이후 `DEPTH`로 이름을 변경하는 것을 고려한다.
 
-외부 Data Buffer는 동기식 Read 방식이다. CNN이 `rAddr`를 출력하면 다음 클록에 해당 위치의 `rData`가 들어온다. 읽은 Pixel은 내부 레지스터와 Shift/Window Buffer를 거쳐 `3×3 Pixel Window`로 변환되어 CH 8개에 공통 전달된다.
+외부 Ping-pong Data Buffer는 비동기 Read 방식이다. CNN이 `rAddr`를 출력하면 해당 주소의 `rData`가 조합논리로 바뀌며, CNN은 Read 요청이 받아들여지는 클록에 그 값을 내부 `data_reg`에 저장한다. 저장된 Pixel은 Shift/Window Buffer를 거쳐 `3×3 Pixel Window`로 변환되어 CH 8개에 공통 전달된다.
+
+```text
+rAddr 변경
+    ↓ 조합논리
+rData 유효
+    ↓ data_read_enable && data_read_ready인 클록
+CNN data_reg에 저장
+```
+
+Weight Ping-pong Buffer도 같은 비동기 Read 조건을 사용한다. `weight_addr`에 해당하는 `weight_data`와 `bias_data`가 조합논리로 출력되고, CNN은 `weight_ren=1`인 클록에 내부 `weight_reg`와 `bias_reg`로 저장한다.
 
 CNN과 Ping-pong Buffer 사이의 주요 신호는 다음과 같다.
 
@@ -537,7 +582,21 @@ PUSH_DATA
 다음 좌표/채널/Layer 또는 IDLE
 ```
 
-CNN 모듈의 외부 Data/Weight 주소 및 유효 신호들은 위 상태기에 의해 내부적으로 제어된다.
+세 번째 Conv Layer까지 완료되면 CNN 상위 FSM은 독립 MaxPool 엔진과
+Feature Buffer MUX를 사용해 다음 순서로 실행한다.
+
+```text
+Conv Layer 1
+→ Conv Layer 2
+→ Conv Layer 3
+→ Pool4: 64×16×16 → 64×8×8
+→ Pool5: 64×8×8 → 64×4×4
+→ CNN_DONE
+```
+
+Conv 실행 중에는 `Feature_Buffer_Mux.select_pool=0`, Pool4/Pool5 실행
+중에는 `select_pool=1`이다. CNN 모듈의 외부 Data/Weight 주소 및 유효
+신호들은 이 상태기에 의해 내부적으로 제어된다.
 
 ## 14. 검증 상태
 
@@ -545,9 +604,11 @@ Self-checking Testbench를 이용해 다음 항목을 검증했다.
 
 - 입력 채널 1개
 - 여러 입력 채널 누적
-- unsigned Pixel 255와 음수 Weight
+- signed 음수 Pixel과 음수 Weight
+- signed 32-bit Bias 전달 및 MAC 결과 반영
+- 64-bit Stream의 13-Word Weight/Bias 패킷 조립
 - `weight_valid` gating
-- `result_valid` 1클록 Pulse
+- 출력 Backpressure 동안 `result_valid/result_out` 유지
 - `acc_clear` 우선순위
 - `CH_Result_Buffer`의 `00`, `01`, `10`, `11` 모드
 - MaxPool 사용/미사용 시 출력 개수와 순서
@@ -563,7 +624,7 @@ Self-checking Testbench를 이용해 다음 항목을 검증했다.
 PASS: all CH tests passed
 PASS: CH_Result_Buffer bypass/pool/ReLU tests passed
 PASS: pooled and bypass Conv_Controller tests passed
-PASS: 1->32->64->128 with L2 MaxPool bypass golden comparison
+PASS: Conv layers plus standalone Pool4/Pool5 golden comparison
 PASS: configurable 1->8 and 1->16->32 schedules
 ```
 
@@ -596,7 +657,13 @@ Conv_Controller.sv
     Weight/Data 요청, Convolution, 후처리, 결과 쓰기 순서 제어
 
 CNN.sv
-    전체 Convolution 데이터 경로와 Layer 순서 통합
+    Conv/Pool 데이터 경로, Feature Buffer MUX와 전체 실행 순서 통합
+
+Standalone_MaxPool.sv
+    Pool4/Pool5에서 외부 Feature Buffer를 직접 읽고 쓰는 signed MaxPool
+
+Feature_Buffer_Mux.sv
+    Conv 엔진과 독립 MaxPool 엔진의 외부 Feature Buffer 경로 선택
 
 tb_CH_Result_Buffer.sv
     CH Result Buffer 네 모드 Self-checking Testbench

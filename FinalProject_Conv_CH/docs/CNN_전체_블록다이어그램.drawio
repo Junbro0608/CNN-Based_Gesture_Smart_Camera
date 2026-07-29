@@ -1,0 +1,173 @@
+<mxfile host="app.diagrams.net" modified="2026-07-29T07:00:00.000Z" agent="Codex" version="24.7.17" type="device" compressed="false">
+  <diagram id="cnn-overall-v3" name="CNN 전체 블록 다이어그램">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1654" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <mxCell id="title" value="CNN Accelerator 전체 블록 다이어그램 (현재 CNN.sv 기준)" style="text;html=1;align=center;verticalAlign=middle;fontSize=24;fontStyle=1;fontColor=#1f2937;" vertex="1" parent="1">
+          <mxGeometry x="330" y="20" width="1040" height="40" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="ext_ctrl" value="&lt;b&gt;CNN ACC Controller&lt;/b&gt;&lt;br&gt;&lt;br&gt;start → CNN&lt;br&gt;CNN → busy, done" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="30" y="100" width="220" height="115" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="ext_weight" value="&lt;b&gt;외부 Weight Buffer&lt;/b&gt;&lt;br&gt;&lt;br&gt;비동기 Read&lt;br&gt;signed Weight: 8-bit&lt;br&gt;signed Bias: 32-bit" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;strokeWidth=2;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="30" y="300" width="220" height="135" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="ext_pingpong" value="&lt;b&gt;외부 pingpongBuffer&lt;/b&gt;&lt;br&gt;&lt;br&gt;비동기 Read / 동기 Write&lt;br&gt;signed Data: 8-bit&lt;br&gt;r_sel = ~w_sel" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="30" y="555" width="220" height="150" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="bank_a" value="Bank A" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1f3dc;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="55" y="650" width="75" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="bank_b" value="Bank B" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1f3dc;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="150" y="650" width="75" height="35" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="cnn_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8fbff;strokeColor=#6c8ebf;strokeWidth=3;" vertex="1" parent="1">
+          <mxGeometry x="300" y="75" width="1290" height="875" as="geometry"/>
+        </mxCell>
+        <mxCell id="cnn_label" value="&lt;b&gt;CNN.sv&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontSize=20;fontColor=#1f4e79;" vertex="1" parent="1">
+          <mxGeometry x="325" y="85" width="130" height="35" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="scheduler" value="&lt;b&gt;CNN 상위 FSM / Scheduler&lt;/b&gt;&lt;br&gt;&lt;br&gt;IDLE → START_GROUP → RUN_GROUP&lt;br&gt;→ START_POOL4 → RUN_POOL4&lt;br&gt;→ START_POOL5 → RUN_POOL5 → DONE" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=2;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="380" y="125" width="345" height="130" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="config" value="&lt;b&gt;Layer / Group 설정 로직&lt;/b&gt;&lt;br&gt;&lt;br&gt;layer_index, output_group_index&lt;br&gt;입출력 채널 수 · 영상 크기&lt;br&gt;Weight base · Bank · Pool/ReLU enable" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;strokeWidth=2;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="790" y="125" width="350" height="130" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="conv_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#4a86e8;strokeWidth=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="350" y="295" width="1000" height="365" as="geometry"/>
+        </mxCell>
+        <mxCell id="conv_label" value="&lt;b&gt;Conv Engine (NUM_CH=8 병렬 연산 경로)&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontSize=17;fontColor=#1155cc;" vertex="1" parent="1">
+          <mxGeometry x="370" y="305" width="430" height="30" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="conv_ctrl" value="&lt;b&gt;Conv_Controller&lt;/b&gt;&lt;br&gt;&lt;br&gt;주소 생성&lt;br&gt;IC / 위치 순회&lt;br&gt;valid-ready 제어&lt;br&gt;결과 Write 제어" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#cfe2f3;strokeColor=#3d85c6;strokeWidth=2;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="380" y="365" width="180" height="160" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="data_reg" value="&lt;b&gt;Data 입력 Register&lt;/b&gt;&lt;br&gt;&lt;br&gt;외부 rData 캡처&lt;br&gt;data_reg_valid" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce5cd;strokeColor=#e69138;strokeWidth=2;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="610" y="355" width="170" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="weight_reg" value="&lt;b&gt;Weight / Bias Register&lt;/b&gt;&lt;br&gt;&lt;br&gt;Weight[8CH][3×3]&lt;br&gt;Bias[8CH] · weight_valid" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce5cd;strokeColor=#e69138;strokeWidth=2;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="610" y="505" width="170" height="100" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="shift" value="&lt;b&gt;Shift_Buffer&lt;/b&gt;&lt;br&gt;&lt;br&gt;4×4 Tile 수집&lt;br&gt;3×3 Window 4개 생성&lt;br&gt;window_index = 00/01/10/11" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d9ead3;strokeColor=#6aa84f;strokeWidth=2;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="830" y="350" width="205" height="105" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="ch_wrapper" value="&lt;b&gt;CH_wrapper&lt;/b&gt;&lt;br&gt;&lt;br&gt;CH × 8 병렬&lt;br&gt;3×3 MAC&lt;br&gt;입력 채널 누적 + Bias&lt;br&gt;산술 Shift(≫8)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="830" y="500" width="205" height="115" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="result_buffer" value="&lt;b&gt;CH_Result_Buffer&lt;/b&gt;&lt;br&gt;&lt;br&gt;mem[0:7][0:3]&lt;br&gt;4개 Conv 결과 저장&lt;br&gt;선택적 MaxPool(2×2) + ReLU&lt;br&gt;채널별 직렬 출력" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ead1dc;strokeColor=#a64d79;strokeWidth=2;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1090" y="425" width="225" height="145" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="standalone_pool" value="&lt;b&gt;Standalone_MaxPool&lt;/b&gt;&lt;br&gt;&lt;br&gt;하나의 엔진을 Pool4 / Pool5에서 재사용&lt;br&gt;2×2 MaxPool, stride 2&lt;br&gt;주소 생성 · Read · 비교 · Write" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f4cccc;strokeColor=#cc0000;strokeWidth=2;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="420" y="730" width="360" height="125" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="mux" value="&lt;b&gt;Feature_Buffer_Mux&lt;/b&gt;&lt;br&gt;&lt;br&gt;select_pool = 0 : Conv 소유&lt;br&gt;select_pool = 1 : Pool 소유&lt;br&gt;rAddr / rData / we / w_sel / wAddr / wData 선택" style="rhombus;whiteSpace=wrap;html=1;fillColor=#d9d2e9;strokeColor=#674ea7;strokeWidth=2;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1010" y="720" width="280" height="155" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="sequence" value="&lt;b&gt;전체 처리 순서 및 Feature Map&lt;/b&gt;&lt;br&gt;입력 Bank A: 1×130×130 → Conv1+ReLU+Pool: 16×64×64 (Bank B) → Conv2+ReLU+Pool: 32×32×32 (Bank A)&lt;br&gt;→ Conv3+ReLU+Pool: 64×16×16 (Bank B) → Pool4: 64×8×8 (Bank A) → Pool5: 64×4×4 (Bank B, 총 1024개)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffde7;strokeColor=#c9b458;strokeWidth=2;fontSize=14;align=left;spacingLeft=12;" vertex="1" parent="1">
+          <mxGeometry x="350" y="880" width="1180" height="55" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e_start" value="start" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;" edge="1" parent="1" source="ext_ctrl" target="scheduler">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_status" value="busy, done" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;dashed=1;" edge="1" parent="1" source="scheduler" target="ext_ctrl">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e_sched_cfg" value="layer/group 선택" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#674ea7;strokeWidth=2;" edge="1" parent="1" source="scheduler" target="config">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_sched_conv" value="conv_start" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#1155cc;strokeWidth=2;" edge="1" parent="1" source="scheduler" target="conv_ctrl">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_conv_done" value="conv_done" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#1155cc;strokeWidth=2;dashed=1;" edge="1" parent="1" source="conv_ctrl" target="scheduler">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_cfg_conv" value="크기·채널·Bank·Weight 주소·Pool/ReLU 설정" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#674ea7;strokeWidth=2;" edge="1" parent="1" source="config" target="conv_ctrl">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e_weight_req" value="weight_ren, weight_addr" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#d79b00;strokeWidth=2;" edge="1" parent="1" source="conv_ctrl" target="ext_weight">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_weight_data" value="weight_data, bias_data" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#d79b00;strokeWidth=2;" edge="1" parent="1" source="ext_weight" target="weight_reg">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e_read_req" value="data read 주소" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#38761d;strokeWidth=2;" edge="1" parent="1" source="conv_ctrl" target="mux">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_mux_buffer_req" value="rAddr / Write 신호" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#38761d;strokeWidth=2;" edge="1" parent="1" source="mux" target="ext_pingpong">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_buffer_mux_data" value="rData" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#38761d;strokeWidth=2;" edge="1" parent="1" source="ext_pingpong" target="mux">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_mux_datareg" value="Conv rData" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#e69138;strokeWidth=2;" edge="1" parent="1" source="mux" target="data_reg">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e_data_shift" value="pixel_data / valid-ready" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#6aa84f;strokeWidth=2;" edge="1" parent="1" source="data_reg" target="shift">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_shift_ch" value="3×3 window × 4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#6aa84f;strokeWidth=2;" edge="1" parent="1" source="shift" target="ch_wrapper">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_weight_ch" value="8CH Weight + Bias" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#d79b00;strokeWidth=2;" edge="1" parent="1" source="weight_reg" target="ch_wrapper">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_ch_result" value="conv_result[0:7] / valid-ready" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#a64d79;strokeWidth=2;" edge="1" parent="1" source="ch_wrapper" target="result_buffer">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_result_ctrl" value="output valid/done · channel/position" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#a64d79;strokeWidth=2;dashed=1;" edge="1" parent="1" source="result_buffer" target="conv_ctrl">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_result_mux" value="Conv 결과 Write" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#a64d79;strokeWidth=2;" edge="1" parent="1" source="result_buffer" target="mux">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e_sched_pool" value="pool_start · Pool4/5 설정" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#cc0000;strokeWidth=2;" edge="1" parent="1" source="scheduler" target="standalone_pool">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_pool_done" value="pool_done" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#cc0000;strokeWidth=2;dashed=1;" edge="1" parent="1" source="standalone_pool" target="scheduler">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_pool_mux" value="Pool rAddr / 결과 Write" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#cc0000;strokeWidth=2;" edge="1" parent="1" source="standalone_pool" target="mux">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_mux_pool_data" value="Pool rData" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#cc0000;strokeWidth=2;" edge="1" parent="1" source="mux" target="standalone_pool">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_sched_mux" value="select_pool" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#674ea7;strokeWidth=2;dashed=1;" edge="1" parent="1" source="scheduler" target="mux">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="legend" value="&lt;b&gt;선 의미&lt;/b&gt;　실선: 데이터/주소 경로　　점선: 상태·완료·선택 제어" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="30" y="760" width="270" height="65" as="geometry"/>
+        </mxCell>
+        <mxCell id="scope_note" value="&lt;b&gt;현재 구현 범위&lt;/b&gt;&lt;br&gt;Conv 3개 + 내부 Pool/ReLU&lt;br&gt;+ 독립 Pool4/Pool5&lt;br&gt;Flatten/FC는 이 그림에 포함하지 않음" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="30" y="845" width="270" height="90" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

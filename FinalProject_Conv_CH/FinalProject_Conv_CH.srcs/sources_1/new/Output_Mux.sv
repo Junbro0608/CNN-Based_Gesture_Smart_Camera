@@ -10,7 +10,7 @@ module Output_Mux #(
         (NUM_CH <= 1) ? 1 : $clog2(NUM_CH)
 ) (
     // MaxPool_wrapper interface.
-    input logic [DATA_WIDTH-1:0] relu_data [0:NUM_CH-1],
+    input logic signed [DATA_WIDTH-1:0] relu_data [0:NUM_CH-1],
     input logic [NUM_CH-1:0]     pool_valid,
 
     // Conv Controller interface.
@@ -18,7 +18,7 @@ module Output_Mux #(
     input logic                    select_enable,
 
     // Shared Data Buffer write-data interface.
-    output logic [DATA_WIDTH-1:0] ch_wdata,
+    output logic signed [DATA_WIDTH-1:0] ch_wdata,
     output logic                  ch_wvalid,
     input  logic                  ch_wready,
 

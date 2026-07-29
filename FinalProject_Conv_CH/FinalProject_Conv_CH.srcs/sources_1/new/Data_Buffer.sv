@@ -14,8 +14,9 @@
 //   cycle N   : read_enable=1 and read_addr is accepted
 //   cycle N+1 : read_valid=1 and read_data is valid
 module Data_Buffer #(
-    // Camera data should be converted from 12-bit to 8-bit when it is loaded.
-    // Keeping CNN feature maps at 8-bit matches CH and reduces BRAM usage.
+    // Camera data must be quantized/centered to signed 8-bit when it is
+    // loaded. Keeping CNN feature maps at signed 8-bit matches CH and reduces
+    // BRAM usage.
     parameter integer DATA_WIDTH = 8,
 
     // Default capacity: eight 128x128 feature maps in each bank.
@@ -31,23 +32,23 @@ module Data_Buffer #(
     output logic                 write_ready,
     input logic                  write_bank,
     input logic [ADDR_WIDTH-1:0] write_addr,
-    input logic [DATA_WIDTH-1:0] write_data,
+    input logic signed [DATA_WIDTH-1:0] write_data,
 
     // Read port: controlled by Conv_Controller.
     input  logic                  read_enable,
     output logic                  read_ready,
     input  logic                  read_bank,
     input  logic [ADDR_WIDTH-1:0] read_addr,
-    output logic [DATA_WIDTH-1:0] read_data,
+    output logic signed [DATA_WIDTH-1:0] read_data,
     output logic                  read_valid,
     input  logic                  read_data_ready
 );
 
     (* ram_style = "block" *)
-    logic [DATA_WIDTH-1:0] bank_0 [0:DEPTH-1];
+    logic signed [DATA_WIDTH-1:0] bank_0 [0:DEPTH-1];
 
     (* ram_style = "block" *)
-    logic [DATA_WIDTH-1:0] bank_1 [0:DEPTH-1];
+    logic signed [DATA_WIDTH-1:0] bank_1 [0:DEPTH-1];
 
     // The memories are intentionally not reset. Clearing every memory word
     // with rst_n would prevent efficient block-RAM inference. read_valid tells

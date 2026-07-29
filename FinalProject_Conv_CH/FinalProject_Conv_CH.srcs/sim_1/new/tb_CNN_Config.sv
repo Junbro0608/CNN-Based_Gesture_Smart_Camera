@@ -33,7 +33,7 @@ module tb_CNN_Config;
     logic [31:0] weight_addr_two;
 
     logic signed [7:0] zero_weight [0:NUM_CH-1][0:8];
-    logic signed [7:0] zero_bias   [0:NUM_CH-1];
+    logic signed [31:0] zero_bias  [0:NUM_CH-1];
 
     integer ch;
     integer kernel;
@@ -44,9 +44,9 @@ module tb_CNN_Config;
         .NUM_CH                  (NUM_CH),
         .NUM_LAYERS              (1),
         .LAYER0_OUTPUT_CHANNELS  (8),
-        .IMAGE_WIDTH             (8),
-        .IMAGE_HEIGHT            (8),
-        .LAYER0_MAXPOOL_EN       (1'b0),
+        .INPUT_WIDTH             (128),
+        .INPUT_HEIGHT            (128),
+        .LAYER0_MAXPOOL_EN       (1'b1),
         .LAYER0_RELU_EN          (1'b0)
     ) dut_one_layer (
         .clk        (clk),
@@ -71,10 +71,10 @@ module tb_CNN_Config;
         .NUM_LAYERS              (2),
         .LAYER0_OUTPUT_CHANNELS  (16),
         .LAYER1_OUTPUT_CHANNELS  (32),
-        .IMAGE_WIDTH             (8),
-        .IMAGE_HEIGHT            (8),
-        .LAYER0_MAXPOOL_EN       (1'b0),
-        .LAYER1_MAXPOOL_EN       (1'b0),
+        .INPUT_WIDTH             (64),
+        .INPUT_HEIGHT            (64),
+        .LAYER0_MAXPOOL_EN       (1'b1),
+        .LAYER1_MAXPOOL_EN       (1'b1),
         .LAYER0_RELU_EN          (1'b0),
         .LAYER1_RELU_EN          (1'b0)
     ) dut_two_layers (
@@ -124,13 +124,27 @@ module tb_CNN_Config;
         error_count = 0;
 
         for (ch = 0; ch < NUM_CH; ch = ch + 1) begin
-            zero_bias[ch] = 8'sd0;
+            zero_bias[ch] = 32'sd0;
             for (kernel = 0; kernel < 9; kernel = kernel + 1)
                 zero_weight[ch][kernel] = 8'sd0;
         end
 
         repeat (3) @(posedge clk);
         rst_n = 1'b1;
+
+        if ((dut_one_layer.LAYER1_PAD_WIDTH != 130)
+            || (dut_one_layer.LAYER2_PAD_WIDTH != 66)
+            || (dut_one_layer.LAYER3_PAD_WIDTH != 34)) begin
+            $error("128 input did not produce padded sizes 130/66/34");
+            error_count = error_count + 1;
+        end
+
+        if ((dut_two_layers.LAYER1_PAD_WIDTH != 66)
+            || (dut_two_layers.LAYER2_PAD_WIDTH != 34)
+            || (dut_two_layers.LAYER3_PAD_WIDTH != 18)) begin
+            $error("64 input did not produce padded sizes 66/34/18");
+            error_count = error_count + 1;
+        end
 
         // NUM_LAYERS=1, 1 -> 8: exactly one physical output group.
         @(posedge clk);
@@ -142,7 +156,9 @@ module tb_CNN_Config;
         if ((dut_one_layer.layer_index != 0)
             || (dut_one_layer.cfg_input_channels != 1)
             || (dut_one_layer.cfg_output_channels != 8)
-            || (dut_one_layer.cfg_output_groups != 1)) begin
+            || (dut_one_layer.cfg_output_groups != 1)
+            || (dut_one_layer.cfg_image_width != 130)
+            || (dut_one_layer.cfg_image_height != 130)) begin
             $error("1->8 configuration mismatch");
             error_count = error_count + 1;
         end
@@ -166,7 +182,9 @@ module tb_CNN_Config;
                 || (dut_two_layers.output_group_index != group)
                 || (dut_two_layers.cfg_input_channels != 1)
                 || (dut_two_layers.cfg_output_channels != 16)
-                || (dut_two_layers.cfg_output_groups != 2)) begin
+                || (dut_two_layers.cfg_output_groups != 2)
+                || (dut_two_layers.cfg_image_width != 66)
+                || (dut_two_layers.cfg_image_height != 66)) begin
                 $error("1->16 Layer 0 group %0d mismatch", group);
                 error_count = error_count + 1;
             end
@@ -179,7 +197,9 @@ module tb_CNN_Config;
                 || (dut_two_layers.output_group_index != group)
                 || (dut_two_layers.cfg_input_channels != 16)
                 || (dut_two_layers.cfg_output_channels != 32)
-                || (dut_two_layers.cfg_output_groups != 4)) begin
+                || (dut_two_layers.cfg_output_groups != 4)
+                || (dut_two_layers.cfg_image_width != 34)
+                || (dut_two_layers.cfg_image_height != 34)) begin
                 $error("16->32 Layer 1 group %0d mismatch", group);
                 error_count = error_count + 1;
             end

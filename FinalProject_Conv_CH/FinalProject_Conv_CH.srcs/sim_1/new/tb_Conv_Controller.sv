@@ -264,7 +264,7 @@ module tb_Conv_Controller;
         if (rst_n && weight_load_start && weight_load_ready) begin
             expected_address =
                 WEIGHT_BASE
-                + input_channel_index * (10*NUM_CH);
+                + input_channel_index * (13*NUM_CH);
 
             if (weight_load_addr !== expected_address[ADDR_WIDTH-1:0]) begin
                 $error("Weight address: expected %h, got %h",

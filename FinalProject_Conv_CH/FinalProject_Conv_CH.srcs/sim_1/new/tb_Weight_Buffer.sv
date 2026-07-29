@@ -24,10 +24,10 @@ module tb_Weight_Buffer;
     logic                s_axis_weight_tlast;
 
     logic signed [7:0] weight_out [0:NUM_CH-1][0:8];
-    logic signed [7:0] bias_out   [0:NUM_CH-1];
+    logic signed [31:0] bias_out  [0:NUM_CH-1];
 
-    logic [NUM_CH*8-1:0] packet_0 [0:9];
-    logic [NUM_CH*8-1:0] packet_1 [0:9];
+    logic [NUM_CH*8-1:0] packet_0 [0:12];
+    logic [NUM_CH*8-1:0] packet_1 [0:12];
 
     integer error_count = 0;
     integer word;
@@ -149,17 +149,17 @@ module tb_Weight_Buffer;
         integer stream_word;
         begin
             for (stream_word = 0;
-                 stream_word < 10;
+                 stream_word < 13;
                  stream_word = stream_word + 1) begin
                 if (packet_number == 0)
                     send_stream_word(
                         packet_0[stream_word],
-                        stream_word == 9
+                        stream_word == 12
                     );
                 else
                     send_stream_word(
                         packet_1[stream_word],
-                        stream_word == 9
+                        stream_word == 12
                     );
             end
         end
@@ -194,7 +194,9 @@ module tb_Weight_Buffer;
     task automatic check_packet(input integer packet_number);
         integer kernel_index;
         integer channel_index;
+        integer bias_byte;
         logic signed [7:0] expected_value;
+        logic signed [31:0] expected_bias;
         begin
             for (channel_index = 0;
                  channel_index < NUM_CH;
@@ -226,18 +228,25 @@ module tb_Weight_Buffer;
                     end
                 end
 
-                if (packet_number == 0)
-                    expected_value =
-                        $signed(packet_0[9][channel_index*8 +: 8]);
-                else
-                    expected_value =
-                        $signed(packet_1[9][channel_index*8 +: 8]);
+                expected_bias = 32'sd0;
+                for (bias_byte = 0;
+                     bias_byte < 4;
+                     bias_byte = bias_byte + 1) begin
+                    if (packet_number == 0)
+                        expected_bias[bias_byte*8 +: 8] =
+                            packet_0[9+bias_byte]
+                                [channel_index*8 +: 8];
+                    else
+                        expected_bias[bias_byte*8 +: 8] =
+                            packet_1[9+bias_byte]
+                                [channel_index*8 +: 8];
+                end
 
-                if (bias_out[channel_index] !== expected_value) begin
+                if (bias_out[channel_index] !== expected_bias) begin
                     $error("Packet %0d, CH%0d bias mismatch",
                            packet_number, channel_index);
                     $display("  expected %0d, got %0d",
-                             expected_value, bias_out[channel_index]);
+                             expected_bias, bias_out[channel_index]);
                     error_count = error_count + 1;
                 end
             end
@@ -246,8 +255,9 @@ module tb_Weight_Buffer;
 
     initial begin
         // Kernel values include both negative and positive signed bytes.
-        // Word 9 contains the bias values.
-        for (word = 0; word < 10; word = word + 1) begin
+        // Words 9..12 contain the four little-endian bytes of each 32-bit
+        // signed bias.
+        for (word = 0; word < 13; word = word + 1) begin
             packet_0[word] = '0;
             packet_1[word] = '0;
 
@@ -258,8 +268,12 @@ module tb_Weight_Buffer;
                     packet_1[word][ch*8 +: 8] =
                         $signed(50 - word*7 - ch);
                 end else begin
-                    packet_0[word][ch*8 +: 8] = $signed(-8 + ch);
-                    packet_1[word][ch*8 +: 8] = $signed(20 + ch);
+                    packet_0[word][ch*8 +: 8] =
+                        (32'sh1234_5600 + ch)
+                            >> ((word-9)*8);
+                    packet_1[word][ch*8 +: 8] =
+                        (-32'sd100000 + ch*257)
+                            >> ((word-9)*8);
                 end
             end
         end
@@ -285,7 +299,7 @@ module tb_Weight_Buffer;
 
         rst_n = 1'b1;
 
-        // First valid ten-beat AXI packet.
+        // First valid 13-beat AXI packet.
         pulse_load_start();
         send_packet(0);
         check_load_complete();

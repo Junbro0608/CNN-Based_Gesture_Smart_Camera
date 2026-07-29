@@ -69,14 +69,16 @@ module Conv_Controller #(
     output logic [CONFIG_WIDTH-1:0] pool_y_index
 );
 
-    localparam integer WEIGHT_PACKET_BYTES = 10 * NUM_CH;
+    // Nine signed 8-bit weights and one signed 32-bit bias per channel.
+    localparam integer WEIGHT_PACKET_BYTES = 13 * NUM_CH;
 
     typedef enum logic [2:0] {
         IDLE,
         SET_WEIGHT_DATA,
         CONV,
         POST_PROCESS,
-        PUSH_DATA
+        PUSH_DATA,
+        DONE
     } state_t;
 
     state_t state;
@@ -130,7 +132,10 @@ module Conv_Controller #(
     end
 
     always_comb begin
-        busy = (state != IDLE);
+        // DONE is a one-clock completion state entered only after the final
+        // synchronous Data Buffer write edge.
+        busy = (state != IDLE) && (state != DONE);
+        done = (state == DONE);
 
         weight_load_start = 1'b0;
         weight_load_addr =
@@ -197,6 +202,10 @@ module Conv_Controller #(
                 data_write_enable   = result_output_valid;
             end
 
+            DONE: begin
+                // One-clock done pulse. All write controls remain inactive.
+            end
+
             default: begin
                 // Safe inactive defaults.
             end
@@ -218,10 +227,7 @@ module Conv_Controller #(
             input_channels_reg      <= '0;
             output_channel_base_reg <= '0;
             weight_base_addr_reg    <= '0;
-            done                    <= 1'b0;
         end else begin
-            done <= 1'b0;
-
             case (state)
                 IDLE: begin
                     if (start) begin
@@ -280,8 +286,10 @@ module Conv_Controller #(
                     if (result_output_done) begin
                         if ((pool_x_reg == tile_width-1)
                             && (pool_y_reg == tile_height-1)) begin
-                            state <= IDLE;
-                            done  <= 1'b1;
+                            // The final Data Buffer write occurs on this
+                            // edge. Report completion during the following
+                            // DONE state instead of on the write edge.
+                            state <= DONE;
                         end else begin
                             if (pool_x_reg == tile_width-1) begin
                                 pool_x_reg <= '0;
@@ -296,6 +304,10 @@ module Conv_Controller #(
                             state              <= SET_WEIGHT_DATA;
                         end
                     end
+                end
+
+                DONE: begin
+                    state <= IDLE;
                 end
 
                 default: begin

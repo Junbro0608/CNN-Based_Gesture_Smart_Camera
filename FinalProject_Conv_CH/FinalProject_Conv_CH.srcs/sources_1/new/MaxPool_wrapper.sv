@@ -20,7 +20,7 @@ module MaxPool_wrapper #(
 
     // Conv Controller / Data Buffer write interface.
     // Only the ReLU-applied value leaves the wrapper.
-    output logic        [DATA_WIDTH-1:0] relu_data [0:NUM_CH-1],
+    output logic signed [DATA_WIDTH-1:0] relu_data [0:NUM_CH-1],
     output logic [NUM_CH-1:0]            pool_valid,
     input  logic [NUM_CH-1:0]            pool_ready
 );

@@ -25,7 +25,7 @@ module MaxPool_2x2 #(
 
     // Stored max-pooling result.
     output logic signed [DATA_WIDTH-1:0] pool_data,
-    output logic        [DATA_WIDTH-1:0] relu_data,
+    output logic signed [DATA_WIDTH-1:0] relu_data,
     output logic                         pool_valid,
     input  logic                         pool_ready
 );
