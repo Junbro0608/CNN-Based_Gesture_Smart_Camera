@@ -6,7 +6,7 @@
 <Project Version="7" Minor="54" Path="D:/CNN_team4_project/CNN-Based_Gesture_Smart_Camera/fc_layer_revision_260729/fc_layer_revision_260729.xpr">
   <DefaultLaunch Dir="$PRUNDIR"/>
   <Configuration>
-    <Option Name="Id" Val="89014bb12bf74e97b946434460ee0f63"/>
+    <Option Name="Id" Val="96b36af70a8f43a59e5400dee3f7b19a"/>
     <Option Name="Part" Val="xc7z020clg400-1"/>
     <Option Name="CompiledLibDir" Val="$PCACHEDIR/compile_simlib"/>
     <Option Name="CompiledLibDirXSim" Val=""/>
@@ -45,7 +45,7 @@
     <Option Name="IPStaticSourceDir" Val="$PIPUSERFILESDIR/ipstatic"/>
     <Option Name="EnableBDX" Val="FALSE"/>
     <Option Name="DSABoardId" Val="zybo-z7-20"/>
-    <Option Name="WTXSimLaunchSim" Val="14"/>
+    <Option Name="WTXSimLaunchSim" Val="43"/>
     <Option Name="WTModelSimLaunchSim" Val="0"/>
     <Option Name="WTQuestaLaunchSim" Val="0"/>
     <Option Name="WTIesLaunchSim" Val="0"/>
@@ -77,7 +77,7 @@
       <File Path="$PSRCDIR/sources_1/imports/rtl/fc_controller.sv">
         <FileInfo>
           <Attr Name="ImportPath" Val="$PPRDIR/../../../OndeviceAI_final_CNN_accelerator/fc_layer_260728/rtl/fc_controller.sv"/>
-          <Attr Name="ImportTime" Val="1785304415"/>
+          <Attr Name="ImportTime" Val="1785322297"/>
           <Attr Name="UsedIn" Val="synthesis"/>
           <Attr Name="UsedIn" Val="implementation"/>
           <Attr Name="UsedIn" Val="simulation"/>
@@ -140,7 +140,7 @@
       <File Path="$PSRCDIR/sources_1/imports/rtl/fc.sv">
         <FileInfo>
           <Attr Name="ImportPath" Val="$PPRDIR/../../../OndeviceAI_final_CNN_accelerator/fc_layer_260728/rtl/fc.sv"/>
-          <Attr Name="ImportTime" Val="1785305736"/>
+          <Attr Name="ImportTime" Val="1785319672"/>
           <Attr Name="UsedIn" Val="synthesis"/>
           <Attr Name="UsedIn" Val="implementation"/>
           <Attr Name="UsedIn" Val="simulation"/>
@@ -163,7 +163,7 @@
       <File Path="$PSRCDIR/sim_1/imports/tb/tb_fc.sv">
         <FileInfo>
           <Attr Name="ImportPath" Val="$PPRDIR/../../../OndeviceAI_final_CNN_accelerator/fc_layer_260728/tb/tb_fc.sv"/>
-          <Attr Name="ImportTime" Val="1785311717"/>
+          <Attr Name="ImportTime" Val="1785322297"/>
           <Attr Name="UsedIn" Val="synthesis"/>
           <Attr Name="UsedIn" Val="implementation"/>
           <Attr Name="UsedIn" Val="simulation"/>
@@ -173,6 +173,7 @@
         <Option Name="DesignMode" Val="RTL"/>
         <Option Name="TopModule" Val="tb_fc"/>
         <Option Name="TopLib" Val="xil_defaultlib"/>
+        <Option Name="TopAutoSet" Val="TRUE"/>
         <Option Name="TransportPathDelay" Val="0"/>
         <Option Name="TransportIntDelay" Val="0"/>
         <Option Name="SelectedSimModel" Val="rtl"/>
