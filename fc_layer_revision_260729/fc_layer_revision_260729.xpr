@@ -3,10 +3,10 @@
 <!--                                                         -->
 <!-- Copyright 1986-2020 Xilinx, Inc. All Rights Reserved.   -->
 
-<Project Version="7" Minor="54" Path="D:/CNN_team4_project/CNN-Based_Gesture_Smart_Camera/fc_module/fc_module.xpr">
+<Project Version="7" Minor="54" Path="D:/CNN_team4_project/CNN-Based_Gesture_Smart_Camera/fc_layer_revision_260729/fc_layer_revision_260729.xpr">
   <DefaultLaunch Dir="$PRUNDIR"/>
   <Configuration>
-    <Option Name="Id" Val="923001be1e834594b8600af23460d26a"/>
+    <Option Name="Id" Val="89014bb12bf74e97b946434460ee0f63"/>
     <Option Name="Part" Val="xc7z020clg400-1"/>
     <Option Name="CompiledLibDir" Val="$PCACHEDIR/compile_simlib"/>
     <Option Name="CompiledLibDirXSim" Val=""/>
@@ -36,7 +36,6 @@
     <Option Name="ActiveSimSet" Val="sim_1"/>
     <Option Name="DefaultLib" Val="xil_defaultlib"/>
     <Option Name="ProjectType" Val="Default"/>
-    <Option Name="IPOutputRepo" Val="$PCACHEDIR/ip"/>
     <Option Name="IPDefaultOutputPath" Val="$PGENDIR/sources_1"/>
     <Option Name="IPCachePermission" Val="read"/>
     <Option Name="IPCachePermission" Val="write"/>
@@ -46,7 +45,7 @@
     <Option Name="IPStaticSourceDir" Val="$PIPUSERFILESDIR/ipstatic"/>
     <Option Name="EnableBDX" Val="FALSE"/>
     <Option Name="DSABoardId" Val="zybo-z7-20"/>
-    <Option Name="WTXSimLaunchSim" Val="0"/>
+    <Option Name="WTXSimLaunchSim" Val="14"/>
     <Option Name="WTModelSimLaunchSim" Val="0"/>
     <Option Name="WTQuestaLaunchSim" Val="0"/>
     <Option Name="WTIesLaunchSim" Val="0"/>
@@ -75,54 +74,73 @@
   <FileSets Version="1" Minor="31">
     <FileSet Name="sources_1" Type="DesignSrcs" RelSrcDir="$PSRCDIR/sources_1" RelGenDir="$PGENDIR/sources_1">
       <Filter Type="Srcs"/>
-      <File Path="$PSRCDIR/sources_1/imports/new/fc_defines.vh">
+      <File Path="$PSRCDIR/sources_1/imports/rtl/fc_controller.sv">
         <FileInfo>
-          <Attr Name="ImportPath" Val="$PPRDIR/../../../OndeviceAI_final_CNN_accelerator/FC_layer_Module_260727/FC_layer_Module_260727.srcs/sources_1/new/fc_defines.vh"/>
-          <Attr Name="ImportTime" Val="1785143937"/>
-          <Attr Name="UsedIn" Val="synthesis"/>
-          <Attr Name="UsedIn" Val="simulation"/>
-        </FileInfo>
-      </File>
-      <File Path="$PSRCDIR/sources_1/imports/new/fc_controller.sv">
-        <FileInfo>
-          <Attr Name="ImportPath" Val="$PPRDIR/../../../OndeviceAI_final_CNN_accelerator/FC_layer_Module_260727/FC_layer_Module_260727.srcs/sources_1/new/fc_controller.sv"/>
-          <Attr Name="ImportTime" Val="1785152235"/>
+          <Attr Name="ImportPath" Val="$PPRDIR/../../../OndeviceAI_final_CNN_accelerator/fc_layer_260728/rtl/fc_controller.sv"/>
+          <Attr Name="ImportTime" Val="1785304415"/>
           <Attr Name="UsedIn" Val="synthesis"/>
           <Attr Name="UsedIn" Val="implementation"/>
           <Attr Name="UsedIn" Val="simulation"/>
         </FileInfo>
       </File>
-      <File Path="$PSRCDIR/sources_1/imports/new/fc_mac_unit.sv">
+      <File Path="$PSRCDIR/sources_1/imports/rtl/fc_core.sv">
         <FileInfo>
-          <Attr Name="ImportPath" Val="$PPRDIR/../../../OndeviceAI_final_CNN_accelerator/FC_layer_Module_260727/FC_layer_Module_260727.srcs/sources_1/new/fc_mac_unit.sv"/>
-          <Attr Name="ImportTime" Val="1785141639"/>
+          <Attr Name="ImportPath" Val="$PPRDIR/../../../OndeviceAI_final_CNN_accelerator/fc_layer_260728/rtl/fc_core.sv"/>
+          <Attr Name="ImportTime" Val="1785304508"/>
           <Attr Name="UsedIn" Val="synthesis"/>
           <Attr Name="UsedIn" Val="implementation"/>
           <Attr Name="UsedIn" Val="simulation"/>
         </FileInfo>
       </File>
-      <File Path="$PSRCDIR/sources_1/imports/new/fc_output_reg.sv">
+      <File Path="$PSRCDIR/sources_1/imports/rtl/fc_memory_adapter.sv">
         <FileInfo>
-          <Attr Name="ImportPath" Val="$PPRDIR/../../../OndeviceAI_final_CNN_accelerator/FC_layer_Module_260727/FC_layer_Module_260727.srcs/sources_1/new/fc_output_reg.sv"/>
-          <Attr Name="ImportTime" Val="1785151556"/>
+          <Attr Name="ImportPath" Val="$PPRDIR/../../../OndeviceAI_final_CNN_accelerator/fc_layer_260728/rtl/fc_memory_adapter.sv"/>
+          <Attr Name="ImportTime" Val="1785295829"/>
           <Attr Name="UsedIn" Val="synthesis"/>
           <Attr Name="UsedIn" Val="implementation"/>
           <Attr Name="UsedIn" Val="simulation"/>
         </FileInfo>
       </File>
-      <File Path="$PSRCDIR/sources_1/imports/new/fc_top.sv">
+      <File Path="$PSRCDIR/sources_1/imports/rtl/fc_output_buffer.sv">
         <FileInfo>
-          <Attr Name="ImportPath" Val="$PPRDIR/../../../OndeviceAI_final_CNN_accelerator/FC_layer_Module_260727/FC_layer_Module_260727.srcs/sources_1/new/fc_top.sv"/>
-          <Attr Name="ImportTime" Val="1785152582"/>
+          <Attr Name="ImportPath" Val="$PPRDIR/../../../OndeviceAI_final_CNN_accelerator/fc_layer_260728/rtl/fc_output_buffer.sv"/>
+          <Attr Name="ImportTime" Val="1785305024"/>
           <Attr Name="UsedIn" Val="synthesis"/>
           <Attr Name="UsedIn" Val="implementation"/>
           <Attr Name="UsedIn" Val="simulation"/>
         </FileInfo>
       </File>
-      <File Path="$PSRCDIR/sources_1/new/fc.sv">
+      <File Path="$PSRCDIR/sources_1/imports/rtl/fc_pe.sv">
         <FileInfo>
-          <Attr Name="ImportPath" Val="$PPRDIR/../../../OndeviceAI_final_CNN_accelerator/FC_layer_module_zybo/FC_layer_module_zybo.srcs/sources_1/new/fc.sv"/>
-          <Attr Name="ImportTime" Val="1785201221"/>
+          <Attr Name="ImportPath" Val="$PPRDIR/../../../OndeviceAI_final_CNN_accelerator/fc_layer_260728/rtl/fc_pe.sv"/>
+          <Attr Name="ImportTime" Val="1785293503"/>
+          <Attr Name="UsedIn" Val="synthesis"/>
+          <Attr Name="UsedIn" Val="implementation"/>
+          <Attr Name="UsedIn" Val="simulation"/>
+        </FileInfo>
+      </File>
+      <File Path="$PSRCDIR/sources_1/imports/rtl/fc_pe_array.sv">
+        <FileInfo>
+          <Attr Name="ImportPath" Val="$PPRDIR/../../../OndeviceAI_final_CNN_accelerator/fc_layer_260728/rtl/fc_pe_array.sv"/>
+          <Attr Name="ImportTime" Val="1785294582"/>
+          <Attr Name="UsedIn" Val="synthesis"/>
+          <Attr Name="UsedIn" Val="implementation"/>
+          <Attr Name="UsedIn" Val="simulation"/>
+        </FileInfo>
+      </File>
+      <File Path="$PSRCDIR/sources_1/imports/rtl/fc_quantizer.sv">
+        <FileInfo>
+          <Attr Name="ImportPath" Val="$PPRDIR/../../../OndeviceAI_final_CNN_accelerator/fc_layer_260728/rtl/fc_quantizer.sv"/>
+          <Attr Name="ImportTime" Val="1785305024"/>
+          <Attr Name="UsedIn" Val="synthesis"/>
+          <Attr Name="UsedIn" Val="implementation"/>
+          <Attr Name="UsedIn" Val="simulation"/>
+        </FileInfo>
+      </File>
+      <File Path="$PSRCDIR/sources_1/imports/rtl/fc.sv">
+        <FileInfo>
+          <Attr Name="ImportPath" Val="$PPRDIR/../../../OndeviceAI_final_CNN_accelerator/fc_layer_260728/rtl/fc.sv"/>
+          <Attr Name="ImportTime" Val="1785305736"/>
           <Attr Name="UsedIn" Val="synthesis"/>
           <Attr Name="UsedIn" Val="implementation"/>
           <Attr Name="UsedIn" Val="simulation"/>
@@ -142,11 +160,19 @@
     </FileSet>
     <FileSet Name="sim_1" Type="SimulationSrcs" RelSrcDir="$PSRCDIR/sim_1" RelGenDir="$PGENDIR/sim_1">
       <Filter Type="Srcs"/>
+      <File Path="$PSRCDIR/sim_1/imports/tb/tb_fc.sv">
+        <FileInfo>
+          <Attr Name="ImportPath" Val="$PPRDIR/../../../OndeviceAI_final_CNN_accelerator/fc_layer_260728/tb/tb_fc.sv"/>
+          <Attr Name="ImportTime" Val="1785311717"/>
+          <Attr Name="UsedIn" Val="synthesis"/>
+          <Attr Name="UsedIn" Val="implementation"/>
+          <Attr Name="UsedIn" Val="simulation"/>
+        </FileInfo>
+      </File>
       <Config>
         <Option Name="DesignMode" Val="RTL"/>
-        <Option Name="TopModule" Val="fc"/>
+        <Option Name="TopModule" Val="tb_fc"/>
         <Option Name="TopLib" Val="xil_defaultlib"/>
-        <Option Name="TopAutoSet" Val="TRUE"/>
         <Option Name="TransportPathDelay" Val="0"/>
         <Option Name="TransportIntDelay" Val="0"/>
         <Option Name="SelectedSimModel" Val="rtl"/>
@@ -183,7 +209,7 @@
     </Simulator>
   </Simulators>
   <Runs Version="1" Minor="15">
-    <Run Id="synth_1" Type="Ft3:Synth" SrcSet="sources_1" Part="xc7z020clg400-1" ConstrsSet="constrs_1" Description="Vivado Synthesis Defaults" AutoIncrementalCheckpoint="false" WriteIncrSynthDcp="false" State="current" Dir="$PRUNDIR/synth_1" IncludeInArchive="true" AutoIncrementalDir="$PPRDIR/../../../OndeviceAI_final_CNN_accelerator/FC_layer_module_zybo/FC_layer_module_zybo.srcs/utils_1/imports/synth_1">
+    <Run Id="synth_1" Type="Ft3:Synth" SrcSet="sources_1" Part="xc7z020clg400-1" ConstrsSet="constrs_1" Description="Vivado Synthesis Defaults" AutoIncrementalCheckpoint="false" WriteIncrSynthDcp="false" State="current" Dir="$PRUNDIR/synth_1" IncludeInArchive="true" AutoIncrementalDir="$PPRDIR/../../../OndeviceAI_final_CNN_accelerator/fc_layer_260728/fc_layer_260728.srcs/utils_1/imports/synth_1">
       <Strategy Version="1" Minor="2">
         <StratHandle Name="Vivado Synthesis Defaults" Flow="Vivado Synthesis 2020"/>
         <Step Id="synth_design"/>
@@ -193,7 +219,7 @@
       <Report Name="ROUTE_DESIGN.REPORT_METHODOLOGY" Enabled="1"/>
       <RQSFiles/>
     </Run>
-    <Run Id="impl_1" Type="Ft2:EntireDesign" Part="xc7z020clg400-1" ConstrsSet="constrs_1" Description="Default settings for Implementation." AutoIncrementalCheckpoint="false" WriteIncrSynthDcp="false" State="current" Dir="$PRUNDIR/impl_1" SynthRun="synth_1" IncludeInArchive="true" GenFullBitstream="true" AutoIncrementalDir="$PPRDIR/../../../OndeviceAI_final_CNN_accelerator/FC_layer_module_zybo/FC_layer_module_zybo.srcs/utils_1/imports/impl_1">
+    <Run Id="impl_1" Type="Ft2:EntireDesign" Part="xc7z020clg400-1" ConstrsSet="constrs_1" Description="Default settings for Implementation." AutoIncrementalCheckpoint="false" WriteIncrSynthDcp="false" State="current" Dir="$PRUNDIR/impl_1" SynthRun="synth_1" IncludeInArchive="true" GenFullBitstream="true" AutoIncrementalDir="$PPRDIR/../../../OndeviceAI_final_CNN_accelerator/fc_layer_260728/fc_layer_260728.srcs/utils_1/imports/impl_1">
       <Strategy Version="1" Minor="2">
         <StratHandle Name="Vivado Implementation Defaults" Flow="Vivado Implementation 2020"/>
         <Step Id="init_design"/>
