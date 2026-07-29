@@ -28,7 +28,7 @@
         <mxCell id="9" value="CNN.sv" style="text;whiteSpace=wrap;html=0;align=left;verticalAlign=middle;fontSize=20;fontStyle=1;fontColor=#1f4e79;" vertex="1" parent="1">
           <mxGeometry x="315" y="90" width="150" height="35" as="geometry"/>
         </mxCell>
-        <mxCell id="10" value="CNN 상위 FSM / Scheduler&#xa;&#xa;IDLE - START_GROUP - RUN_GROUP&#xa;START_POOL4 - RUN_POOL4&#xa;START_POOL5 - RUN_POOL5 - DONE" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=2;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+        <mxCell id="10" value="CNN 상위 FSM / Scheduler&#xa;&#xa;IDLE - START_GROUP - RUN_GROUP&#xa;STAGE_DONE - WAIT_STAGE_START&#xa;START/RUN_POOL4 - START/RUN_POOL5&#xa;단계마다 done 후 next start 대기" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=2;fontSize=14;fontStyle=1;" vertex="1" parent="1">
           <mxGeometry x="370" y="135" width="345" height="130" as="geometry"/>
         </mxCell>
         <mxCell id="11" value="Layer / Group 설정 로직&#xa;&#xa;layer_index, output_group_index&#xa;영상 크기, 입출력 채널 수&#xa;Weight base, Bank, Pool/ReLU enable" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#e1d5e7;strokeColor=#9673a6;strokeWidth=2;fontSize=14;fontStyle=1;" vertex="1" parent="1">
@@ -64,7 +64,7 @@
         <mxCell id="21" value="Feature_Buffer_Mux&#xa;&#xa;select_pool=0: Conv 경로&#xa;select_pool=1: Pool 경로&#xa;rAddr/rData/we/w_sel/wAddr/wData 선택" style="rhombus;whiteSpace=wrap;html=0;fillColor=#d9d2e9;strokeColor=#674ea7;strokeWidth=2;fontSize=13;fontStyle=1;" vertex="1" parent="1">
           <mxGeometry x="1010" y="720" width="280" height="165" as="geometry"/>
         </mxCell>
-        <mxCell id="22" value="전체 처리 순서 및 Bank 이동&#xa;입력 1x130x130 (A) - Conv1+ReLU+Pool - 16x64x64 (B) - Conv2+ReLU+Pool - 32x32x32 (A)&#xa;- Conv3+ReLU+Pool - 64x16x16 (B) - Pool4 - 64x8x8 (A) - Pool5 - 64x4x4 (B, 1024개)" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#fffde7;strokeColor=#c9b458;strokeWidth=2;fontSize=14;align=left;spacingLeft=12;fontStyle=1;" vertex="1" parent="1">
+        <mxCell id="22" value="전체 처리 순서 및 Bank 이동 (각 화살표: done - 외부 Buffer 주소 0부터 갱신 - next start)&#xa;입력 1x130x130 (A) - Conv1 - 16x64x64 (B) - Conv2 - 32x32x32 (A) - Conv3 - 64x16x16 (B)&#xa;- Pool4 - 64x8x8 (A) - Pool5 - 64x4x4 (B, 1024개)" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#fffde7;strokeColor=#c9b458;strokeWidth=2;fontSize=14;align=left;spacingLeft=12;fontStyle=1;" vertex="1" parent="1">
           <mxGeometry x="340" y="890" width="1170" height="50" as="geometry"/>
         </mxCell>
         <mxCell id="23" value="현재 구현 범위&#xa;&#xa;Conv 3개 + 내부 Pool/ReLU&#xa;+ 독립 Pool4 / Pool5&#xa;&#xa;Flatten / FC는 미포함" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#f5f5f5;strokeColor=#666666;fontSize=12;fontStyle=1;" vertex="1" parent="1">

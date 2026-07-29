@@ -1,8 +1,8 @@
 `timescale 1ns / 1ps
 
-// Checks only the programmable CNN layer/group scheduler. conv_done is forced
-// by the testbench so the test does not repeat the datapath verification that
-// is already performed by tb_CNN.
+// Checks the programmable CNN layer/group scheduler and the layer-level
+// start/done handshake. conv_done is forced so this test does not repeat the
+// datapath verification already performed by tb_CNN.
 module tb_CNN_Config;
 
     localparam integer NUM_CH = 8;
@@ -117,6 +117,26 @@ module tb_CNN_Config;
         end
     endtask
 
+    task automatic start_second_layer;
+        begin
+            // The previous STAGE_DONE state advances to WAIT_STAGE_START.
+            @(posedge clk);
+            #1;
+
+            if (done_two || busy_two) begin
+                $error("Two-layer CNN did not enter its inter-layer wait");
+                error_count = error_count + 1;
+            end
+
+            @(negedge clk);
+            start_two = 1'b1;
+            @(posedge clk);
+            #1;
+            @(negedge clk);
+            start_two = 1'b0;
+        end
+    endtask
+
     initial begin
         rst_n       = 1'b0;
         start_one   = 1'b0;
@@ -191,6 +211,15 @@ module tb_CNN_Config;
             pulse_two_layer_done();
         end
 
+        if (!done_two || busy_two) begin
+            $error("1->16 Layer 0 did not issue its layer done pulse");
+            error_count = error_count + 1;
+        end
+
+        // The external controller updates Data/Weight Buffers here, then
+        // starts Layer 1. Both buffers use address zero as their new base.
+        start_second_layer();
+
         for (group = 0; group < 4; group = group + 1) begin
             wait (dut_two_layers.cnn_state == 2'd2);
             if ((dut_two_layers.layer_index != 1)
@@ -207,12 +236,14 @@ module tb_CNN_Config;
         end
 
         if (!done_two || busy_two) begin
-            $error("1->16->32 did not finish after Layer 1");
+            $error("16->32 Layer 1 did not issue its layer done pulse");
             error_count = error_count + 1;
         end
 
         if (error_count == 0)
-            $display("PASS: configurable 1->8 and 1->16->32 schedules");
+            $display(
+                "PASS: configurable schedules and per-layer start/done"
+            );
         else
             $fatal(1, "FAIL: %0d configurable-schedule errors", error_count);
 

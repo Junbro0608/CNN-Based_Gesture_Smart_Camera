@@ -1,7 +1,7 @@
 Copyright 1986-2020 Xilinx, Inc. All Rights Reserved.
 ------------------------------------------------------------------------------------
 | Tool Version : Vivado v.2020.2 (win64) Build 3064766 Wed Nov 18 09:12:45 MST 2020
-| Date         : Wed Jul 29 16:04:42 2026
+| Date         : Wed Jul 29 16:40:00 2026
 | Host         : DESKTOP-7CFQ9ND running 64-bit major release  (build 9200)
 | Command      : report_timing_summary -file .codex_tmp/cnn_synth_timing.rpt
 | Design       : CNN
@@ -39,10 +39,10 @@ check_timing report
 
 Table of Contents
 -----------------
-1. checking no_clock (1861)
+1. checking no_clock (1865)
 2. checking constant_clock (0)
 3. checking pulse_width_clock (0)
-4. checking unconstrained_internal_endpoints (5439)
+4. checking unconstrained_internal_endpoints (5449)
 5. checking no_input_delay (714)
 6. checking no_output_delay (109)
 7. checking multiple_clock (0)
@@ -52,9 +52,9 @@ Table of Contents
 11. checking partial_output_delay (0)
 12. checking latch_loops (0)
 
-1. checking no_clock (1861)
+1. checking no_clock (1865)
 ---------------------------
- There are 1861 register/latch pins with no clock driven by root clock pin: clk (HIGH)
+ There are 1865 register/latch pins with no clock driven by root clock pin: clk (HIGH)
 
 
 2. checking constant_clock (0)
@@ -67,9 +67,9 @@ Table of Contents
  There are 0 register/latch pins which need pulse_width check
 
 
-4. checking unconstrained_internal_endpoints (5439)
+4. checking unconstrained_internal_endpoints (5449)
 ---------------------------------------------------
- There are 5439 pins that are not constrained for maximum delay. (HIGH)
+ There are 5449 pins that are not constrained for maximum delay. (HIGH)
 
  There are 0 pins that are not constrained for maximum delay due to constant clock.
 

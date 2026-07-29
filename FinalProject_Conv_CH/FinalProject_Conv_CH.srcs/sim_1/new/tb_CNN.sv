@@ -1,7 +1,9 @@
 `timescale 1ns / 1ps
 
-// Full 1->32->64->128 three-layer CNN test. Layers 0/1 use MaxPool+ReLU;
-// Layer 2 bypasses MaxPool and applies ReLU to every convolution result.
+// Full 1->32->64->128 three-layer CNN test. One start executes one stage and
+// every Conv layer/Pool4/Pool5 returns one done pulse before the next start.
+// Layers 0/1 use MaxPool+ReLU; Layer 2 bypasses MaxPool and applies ReLU to
+// every convolution result.
 module tb_CNN;
 
     localparam integer NUM_CH           = 8;
@@ -60,9 +62,10 @@ module tb_CNN;
         (L2_TILE_WIDTH*L2_TILE_HEIGHT)
         * (L2_CHANNELS/NUM_CH) * L1_CHANNELS;
 
-    localparam logic [31:0] WEIGHT_BASE_L0 = 32'h1000_0000;
-    localparam logic [31:0] WEIGHT_BASE_L1 = 32'h1100_0000;
-    localparam logic [31:0] WEIGHT_BASE_L2 = 32'h1200_0000;
+    // The external controller reloads each layer's weights at address zero.
+    localparam logic [31:0] WEIGHT_BASE_L0 = 32'h0000_0000;
+    localparam logic [31:0] WEIGHT_BASE_L1 = 32'h0000_0000;
+    localparam logic [31:0] WEIGHT_BASE_L2 = 32'h0000_0000;
     localparam integer WEIGHT_PACKET_BYTES = 13*NUM_CH;
 
     logic clk = 1'b0;
@@ -101,6 +104,7 @@ module tb_CNN;
     integer group_start_count [0:2];
     integer result_write_count [0:2];
     integer standalone_write_count;
+    integer stage_done_count;
 
     integer packet_layer;
     integer packet_input_channel;
@@ -179,6 +183,42 @@ module tb_CNN;
     );
 
     always #5 clk = ~clk;
+
+    task automatic pulse_stage_start;
+        begin
+            @(negedge clk);
+            start = 1'b1;
+            @(posedge clk);
+            #1;
+            @(negedge clk);
+            start = 1'b0;
+        end
+    endtask
+
+    task automatic wait_stage_done(input integer expected_stage);
+        begin
+            wait (done === 1'b1);
+            #1;
+            stage_done_count = stage_done_count + 1;
+
+            if (stage_done_count != expected_stage) begin
+                $error("Unexpected stage done count: expected %0d, got %0d",
+                       expected_stage, stage_done_count);
+                error_count = error_count + 1;
+            end
+
+            if (busy !== 1'b0) begin
+                $error("busy remained high during stage done %0d",
+                       expected_stage);
+                error_count = error_count + 1;
+            end
+
+            // Move from STAGE_DONE to WAIT_STAGE_START or CNN_IDLE.
+            @(posedge clk);
+            #1;
+            wait (done === 1'b0);
+        end
+    endtask
 
     // Reproducible random-looking input in the signed 8-bit range.
     // The first values are 19, 92, -91, -18, 55, ...
@@ -695,6 +735,7 @@ module tb_CNN;
         start = 1'b0;
         bank_0_padding_cleared = 1'b0;
         standalone_write_count = 0;
+        stage_done_count = 0;
 
         for (init_addr = 0; init_addr < BANK_DEPTH;
              init_addr=init_addr+1) begin
@@ -754,21 +795,24 @@ module tb_CNN;
         #1;
         rst_n = 1'b1;
 
-        @(negedge clk);
-        start = 1'b1;
-        @(posedge clk);
-        #1;
+        // One external start per buffer-processing stage:
+        // Layer0, Layer1, Layer2, Pool4, Pool5.
+        pulse_stage_start();
 
         if (busy !== 1'b1) begin
             $error("CNN did not assert busy");
             error_count = error_count + 1;
         end
 
-        @(negedge clk);
-        start = 1'b0;
-
-        wait (done === 1'b1);
-        #1;
+        wait_stage_done(1);
+        pulse_stage_start();
+        wait_stage_done(2);
+        pulse_stage_start();
+        wait_stage_done(3);
+        pulse_stage_start();
+        wait_stage_done(4);
+        pulse_stage_start();
+        wait_stage_done(5);
 
         if ((group_start_count[0] != L0_CHANNELS/NUM_CH)
             || (group_start_count[1] != L1_CHANNELS/NUM_CH)
@@ -809,6 +853,12 @@ module tb_CNN;
             error_count = error_count + 1;
         end
 
+        if (stage_done_count != 5) begin
+            $error("Expected five layer/pool done pulses, got %0d",
+                   stage_done_count);
+            error_count = error_count + 1;
+        end
+
         for (final_addr = 0; final_addr < L2_CHANNELS;
              final_addr = final_addr+1) begin
             if (external_bank_1[final_addr]
@@ -832,9 +882,6 @@ module tb_CNN;
         for (print_index = 0; print_index < 8; print_index=print_index+1)
             $write("%0d ", observed_l2[print_index]);
         $display("");
-
-        @(posedge clk);
-        #1;
 
         if ((busy !== 1'b0) || (done !== 1'b0)) begin
             $error("CNN did not return to idle");

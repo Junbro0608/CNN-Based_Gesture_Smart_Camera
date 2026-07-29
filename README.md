@@ -381,6 +381,11 @@ signed_pixel = grayscale_pixel - 128
 
 외부 Ping-pong Data Buffer는 비동기 Read 방식이다. CNN이 `rAddr`를 출력하면 해당 주소의 `rData`가 조합논리로 바뀌며, CNN은 Read 요청이 받아들여지는 클록에 그 값을 내부 `data_reg`에 저장한다. 저장된 Pixel은 Shift/Window Buffer를 거쳐 `3×3 Pixel Window`로 변환되어 CH 8개에 공통 전달된다.
 
+새 `rData`는 같은 클록 Edge에 바로 연산하지 않는다. Clock N에서
+`data_reg`에 저장한 값은 Clock N+1부터 Shift Buffer가 받아 사용한다.
+Weight와 Bias도 내부 `weight_reg`, `bias_reg`에 저장한 다음 클록부터
+연산 경로에서 사용한다.
+
 ```text
 rAddr 변경
     ↓ 조합논리
@@ -558,13 +563,15 @@ Vivado RTL Schematic에서는 SystemVerilog 배열 포트가 낱개 신호로 �
 
 ## 13. Controller 동작
 
-CNN 상위 제어부는 `start`를 받으면 Conv Controller를 구동하며, 외부에서는 세 신호만으로 작업 상태를 확인할 수 있다.
+CNN 상위 제어부는 첫 `start`에서 Layer 1을 실행한다. 각 Layer 또는
+독립 Pool이 끝나면 `done`을 한 클럭 출력하고, 외부 Controller가
+Data/Weight Buffer를 갱신한 뒤 보내는 다음 `start`까지 대기한다.
 
 | 신호 | 방향 | 의미 |
 |---|---|---|
-| `start` | 입력 | CNN 연산 시작 요청 |
-| `busy` | 출력 | 전체 CNN 연산 진행 중 |
-| `done` | 출력 | 전체 연산 완료 Pulse |
+| `start` | 입력 | 현재 Layer/Pool 시작 요청 |
+| `busy` | 출력 | 현재 Layer/Pool 연산 진행 중 |
+| `done` | 출력 | 현재 Layer/Pool 완료 Pulse |
 
 Conv Controller의 내부 상태 흐름:
 
@@ -587,12 +594,20 @@ Feature Buffer MUX를 사용해 다음 순서로 실행한다.
 
 ```text
 Conv Layer 1
+→ done / 외부 Buffer 갱신 / start
 → Conv Layer 2
+→ done / 외부 Buffer 갱신 / start
 → Conv Layer 3
+→ done / 외부 Buffer 갱신 / start
 → Pool4: 64×16×16 → 64×8×8
+→ done / 외부 Buffer 갱신 / start
 → Pool5: 64×8×8 → 64×4×4
-→ CNN_DONE
+→ done / CNN_IDLE
 ```
+
+외부 Controller는 각 Layer의 `done`을 받은 후 다음 Layer의 Data와
+Weight를 Buffer 주소 0부터 다시 저장한다. 다음 `start`가 들어오기
+전까지 CNN은 다음 Layer 또는 Pool을 시작하지 않는다.
 
 Conv 실행 중에는 `Feature_Buffer_Mux.select_pool=0`, Pool4/Pool5 실행
 중에는 `select_pool=1`이다. CNN 모듈의 외부 Data/Weight 주소 및 유효
@@ -615,8 +630,12 @@ Self-checking Testbench를 이용해 다음 항목을 검증했다.
 - 음수 MaxPool 결과와 ReLU 처리
 - Controller의 Pool/Bypass 경로
 - `1 → 32 → 64 → 128` 3-Layer CNN 통합 동작
-- `1 → 8` 1-Layer 스케줄 및 종료 시점
-- `1 → 16 → 32` 2-Layer 채널·그룹 스케줄 및 종료 시점
+- `1 → 8` 1-Layer 스케줄과 Layer 완료 `done`
+- `1 → 16 → 32` 2-Layer 채널·그룹 스케줄과 Layer별 `start/done`
+- Layer1/Layer2/Layer3/Pool4/Pool5의 총 5회 `done`
+- 각 `done` 이후 다음 `start` 전까지 `WAIT_STAGE_START` 대기
+- Data/Weight 주소가 각 Layer에서 0부터 시작
+- 외부 Read Data를 내부 Register에 저장하고 다음 클록부터 사용
 
 결과:
 
@@ -625,7 +644,7 @@ PASS: all CH tests passed
 PASS: CH_Result_Buffer bypass/pool/ReLU tests passed
 PASS: pooled and bypass Conv_Controller tests passed
 PASS: Conv layers plus standalone Pool4/Pool5 golden comparison
-PASS: configurable 1->8 and 1->16->32 schedules
+PASS: configurable schedules and per-layer start/done
 ```
 
 통합 Testbench의 기본 처리 구성:

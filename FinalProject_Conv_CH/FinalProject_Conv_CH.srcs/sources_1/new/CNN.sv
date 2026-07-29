@@ -35,12 +35,11 @@ module CNN #(
     // This may be disabled only by focused Conv-only testbenches.
     parameter logic ENABLE_STANDALONE_POOL = 1'b1,
 
-    parameter logic [WEIGHT_ADDR_WIDTH-1:0] WEIGHT_BASE_LAYER0 =
-        32'h1000_0000,
-    parameter logic [WEIGHT_ADDR_WIDTH-1:0] WEIGHT_BASE_LAYER1 =
-        32'h1100_0000,
-    parameter logic [WEIGHT_ADDR_WIDTH-1:0] WEIGHT_BASE_LAYER2 =
-        32'h1200_0000
+    // The external controller reloads the Weight Buffer after each layer.
+    // Therefore every layer starts reading its newly loaded weights at zero.
+    parameter logic [WEIGHT_ADDR_WIDTH-1:0] WEIGHT_BASE_LAYER0 = '0,
+    parameter logic [WEIGHT_ADDR_WIDTH-1:0] WEIGHT_BASE_LAYER1 = '0,
+    parameter logic [WEIGHT_ADDR_WIDTH-1:0] WEIGHT_BASE_LAYER2 = '0
 ) (
     input  logic clk,
     input  logic rst_n,
@@ -108,18 +107,26 @@ module CNN #(
     // Nine signed 8-bit weights and one signed 32-bit bias per channel.
     localparam integer WEIGHT_PACKET_BYTES = 13 * NUM_CH;
 
-    typedef enum logic [2:0] {
+    typedef enum logic [3:0] {
         CNN_IDLE,
         START_GROUP,
         RUN_GROUP,
+        STAGE_DONE,
+        WAIT_STAGE_START,
         START_POOL4,
         RUN_POOL4,
         START_POOL5,
-        RUN_POOL5,
-        CNN_DONE
+        RUN_POOL5
     } cnn_state_t;
 
     cnn_state_t cnn_state;
+
+    localparam logic [1:0] NEXT_CONV  = 2'd0;
+    localparam logic [1:0] NEXT_POOL4 = 2'd1;
+    localparam logic [1:0] NEXT_POOL5 = 2'd2;
+
+    logic [1:0] next_stage;
+    logic       final_stage_done;
 
     // Visible in the integration waveform.
     logic [1:0] layer_index;
@@ -241,9 +248,14 @@ module CNN #(
         end
     end
 
+    // Each accepted start executes exactly one buffer-processing stage.
+    // done pulses after that stage's final synchronous write. The external
+    // controller may then update Data/Weight Buffers and issue the next start.
     assign busy =
-        (cnn_state != CNN_IDLE) && (cnn_state != CNN_DONE);
-    assign done = (cnn_state == CNN_DONE);
+        (cnn_state != CNN_IDLE)
+        && (cnn_state != STAGE_DONE)
+        && (cnn_state != WAIT_STAGE_START);
+    assign done = (cnn_state == STAGE_DONE);
 
     // The external memories use asynchronous reads. Their combinational read
     // values are captured only on an accepted controller request.
@@ -342,8 +354,10 @@ module CNN #(
         end
     end
 
-    // The external ping-pong buffer must contain the input image before start.
-    // Execute all Conv groups, followed by standalone Pool4 and Pool5.
+    // The external ping-pong buffer must contain the current stage input
+    // before start. One start executes one Conv layer, Pool4, or Pool5.
+    // After every stage, done pulses and the FSM waits for the next start so
+    // that the external controller can update the ping-pong/weight buffers.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             cnn_state           <= CNN_IDLE;
@@ -351,6 +365,8 @@ module CNN #(
             output_group_index  <= '0;
             conv_start          <= 1'b0;
             pool_start          <= 1'b0;
+            next_stage          <= NEXT_CONV;
+            final_stage_done    <= 1'b0;
         end else begin
             conv_start <= 1'b0;
             pool_start <= 1'b0;
@@ -360,6 +376,8 @@ module CNN #(
                     if (start) begin
                         layer_index         <= 2'd0;
                         output_group_index  <= '0;
+                        next_stage          <= NEXT_CONV;
+                        final_stage_done    <= 1'b0;
                         cnn_state           <= START_GROUP;
                     end
                 end
@@ -375,21 +393,49 @@ module CNN #(
                             == cfg_output_groups-1) begin
                             output_group_index <= '0;
 
-                            if (layer_index == NUM_LAYERS-1) begin
-                                if (ENABLE_STANDALONE_POOL
-                                    && (NUM_LAYERS == 3))
-                                    cnn_state <= START_POOL4;
-                                else
-                                    cnn_state <= CNN_DONE;
+                            if (layer_index < NUM_LAYERS-1) begin
+                                layer_index      <= layer_index + 1'b1;
+                                next_stage       <= NEXT_CONV;
+                                final_stage_done <= 1'b0;
+                            end else if (ENABLE_STANDALONE_POOL
+                                         && (NUM_LAYERS == 3)) begin
+                                next_stage       <= NEXT_POOL4;
+                                final_stage_done <= 1'b0;
                             end else begin
-                                layer_index <= layer_index + 1'b1;
-                                cnn_state   <= START_GROUP;
+                                final_stage_done <= 1'b1;
                             end
+
+                            cnn_state <= STAGE_DONE;
                         end else begin
                             output_group_index <=
                                 output_group_index + 1'b1;
                             cnn_state <= START_GROUP;
                         end
+                    end
+                end
+
+                STAGE_DONE: begin
+                    // done is high throughout this state. For a non-final
+                    // stage, wait until the external controller has updated
+                    // its buffers and supplies another start pulse.
+                    if (final_stage_done) begin
+                        layer_index         <= 2'd0;
+                        output_group_index  <= '0;
+                        next_stage          <= NEXT_CONV;
+                        final_stage_done    <= 1'b0;
+                        cnn_state           <= CNN_IDLE;
+                    end else begin
+                        cnn_state <= WAIT_STAGE_START;
+                    end
+                end
+
+                WAIT_STAGE_START: begin
+                    if (start) begin
+                        case (next_stage)
+                            NEXT_POOL4: cnn_state <= START_POOL4;
+                            NEXT_POOL5: cnn_state <= START_POOL5;
+                            default:    cnn_state <= START_GROUP;
+                        endcase
                     end
                 end
 
@@ -399,8 +445,11 @@ module CNN #(
                 end
 
                 RUN_POOL4: begin
-                    if (pool_done)
-                        cnn_state <= START_POOL5;
+                    if (pool_done) begin
+                        next_stage       <= NEXT_POOL5;
+                        final_stage_done <= 1'b0;
+                        cnn_state        <= STAGE_DONE;
+                    end
                 end
 
                 START_POOL5: begin
@@ -409,13 +458,10 @@ module CNN #(
                 end
 
                 RUN_POOL5: begin
-                    if (pool_done)
-                        cnn_state <= CNN_DONE;
-                end
-
-                CNN_DONE: begin
-                    // done is a Moore output of this one-clock state.
-                    cnn_state <= CNN_IDLE;
+                    if (pool_done) begin
+                        final_stage_done <= 1'b1;
+                        cnn_state        <= STAGE_DONE;
+                    end
                 end
 
                 default: begin
