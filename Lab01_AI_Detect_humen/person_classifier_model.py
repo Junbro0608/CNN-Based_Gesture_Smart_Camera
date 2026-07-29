@@ -1,6 +1,5 @@
 import torch.nn as nn
 
-
 class PersonClassifierCNN(nn.Module):
     def __init__(self):
         super(PersonClassifierCNN, self).__init__()

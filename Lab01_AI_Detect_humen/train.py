@@ -14,6 +14,11 @@ if device.type == 'cuda':
     torch.backends.cudnn.benchmark = True
 
 # 1. 데이터 전처리 및 데이터로더 설정
+# FPGA 기준 :  
+# ~128 그레이스케일과 노멀라이징
+# 128 기준으로  16채널 메모리 기준 이것보다 작게
+# 데이터 새 데이터 추가하기
+
 train_transform = transforms.Compose([
     transforms.Grayscale(num_output_channels=1),
     transforms.Resize((64, 64)),

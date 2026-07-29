@@ -5,43 +5,38 @@ from PIL import Image
 from person_classifier_model import PersonClassifierCNN
 
 # ==========================================
-# 1. 사용자 설정 및 모델 로드
+# 1. 모델 설정 및 로드
 # ==========================================
-# TODO: 학습할 때 사용했던 본인의 모델 클래스를 임포트하세요.
-# from your_model_file import PersonClassifierCNN
-
-# 가중치 파일 경로
-WEIGHT_PATH = 'person_classifier.pth' # 또는 'person_classifier_best_acc.pth'
+WEIGHT_PATH = 'person_classifier.pth'
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"사용 중인 디바이스: {device}")
 
-# 모델 초기화 및 가중치 로드
 model = PersonClassifierCNN().to(device)
 model.load_state_dict(torch.load(WEIGHT_PATH, map_location=device))
-model.eval()  # 평가 모드로 전환 (BatchNorm, Dropout 비활성화)
+model.eval()
 
 # ==========================================
-# 2. 이미지 전처리 설정 (학습할 때와 동일하게 맞춤)
+# 2. 이미지 전처리 설정
 # ==========================================
-# 데이터셋 생성 시 128x128 해상도를 기준으로 했으므로 동일하게 리사이즈합니다.
 transform = transforms.Compose([
+    transforms.Grayscale(num_output_channels=1),
     transforms.Resize((64, 64)),
     transforms.ToTensor(),
-    # 학습 시 Normalize를 사용했다면 여기에 추가하세요.
-    # transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+    transforms.Normalize(mean=[0.5], std=[0.5]),
 ])
 
 # ==========================================
 # 3. 웹캠 캡처 및 실시간 추론
 # ==========================================
-cap = cv2.VideoCapture(0) # 0번(기본) 웹캠 열기
+cap = cv2.VideoCapture(0)
 
 if not cap.isOpened():
     print("웹캠을 열 수 없습니다.")
     exit()
 
 print("웹캠이 켜졌습니다. 종료하려면 'q' 키를 누르세요.")
+print("화면 중앙의 '파란색 네모 박스' 안에 사람을 비춰주세요!")
 
 while True:
     ret, frame = cap.read()
@@ -49,21 +44,38 @@ while True:
         print("프레임을 읽어올 수 없습니다.")
         break
 
-    # OpenCV 프레임(BGR)을 PIL 이미지(RGB)로 변환
-    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    pil_img = Image.fromarray(gray_frame)
+    # 화면 크기 가져오기
+    h, w, _ = frame.shape
+    
+    # 중앙 정사각형 박스 크기 계산 (화면 세로 길이 기준)
+    box_size = min(h, w) - 100
+    x1 = (w - box_size) // 2
+    y1 = (h - box_size) // 2
+    x2 = x1 + box_size
+    y2 = y1 + box_size
 
-    # 전처리 및 텐서 변환 (배치 차원 추가: [3, 128, 128] -> [1, 3, 128, 128])
+    # 1. 화면 중앙에 파란색 가이드 박스 그리기
+    cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+
+    # 2. 박스 안쪽 이미지만 잘라내기 (Crop)
+    roi_frame = frame[y1:y2, x1:x2]
+
+    # 3. 잘라낸 이미지를 흑백으로 변환 후 전처리
+    gray_roi = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
+    pil_img = Image.fromarray(gray_roi)
+
+    # 전처리 텐서 변환: [1, 1, 64, 64]
     input_tensor = transform(pil_img).unsqueeze(0).to(device)
 
-    # 모델 추론
+    # 4. 모델 추론 (안전한 값 추출 방식 적용)
     with torch.no_grad():
-        output = model(input_tensor).squeeze()
-        # BCEWithLogitsLoss를 썼으므로, 출력값에 Sigmoid를 씌워 0~1 사이의 확률로 변환
+        output = model(input_tensor) # 형태: [1, 1]
+        logit = output.item()
         probability = torch.sigmoid(output).item()
 
-    # 결과 판별 (0.5 이상이면 Person으로 가정 - 학습 시 라벨링 기준에 따라 다를 수 있음)
-    # Person 라벨이 1.0, Non-Person 라벨이 0.0이었다고 가정한 로직입니다.
+    print(f"logit={logit:.4f}, prob={probability:.6f}")
+
+    # 5. 결과 판별 및 텍스트 출력
     if probability >= 0.5:
         label_text = f"Person ({probability*100:.1f}%)"
         color = (0, 255, 0) # 초록색 텍스트
@@ -71,8 +83,8 @@ while True:
         label_text = f"Non-Person ({(1-probability)*100:.1f}%)"
         color = (0, 0, 255) # 빨간색 텍스트
 
-    # 화면에 결과 텍스트 출력
-    cv2.putText(frame, label_text, (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3)
+    # 결과를 네모 박스 바로 위에 출력
+    cv2.putText(frame, label_text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
     # 결과 화면 보여주기
     cv2.imshow('Person Classifier Test', frame)
