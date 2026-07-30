@@ -145,7 +145,7 @@ module axis_image_buffer_128x128 (
                             state      <= FRAME_READY;
                         end else if (write_x == 7'd127) begin
                             write_x <= 7'd0;
-                            write_y <= write_y <= write_y + 1;
+                            write_y <= write_y + 1;
                         end else begin
                             write_x <= write_x + 1;
                         end

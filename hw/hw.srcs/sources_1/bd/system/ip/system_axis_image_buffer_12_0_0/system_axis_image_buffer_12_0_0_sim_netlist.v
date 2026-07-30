@@ -1,7 +1,7 @@
 // Copyright 1986-2020 Xilinx, Inc. All Rights Reserved.
 // --------------------------------------------------------------------------------
 // Tool Version: Vivado v.2020.2 (win64) Build 3064766 Wed Nov 18 09:12:45 MST 2020
-// Date        : Thu Jul 30 17:42:36 2026
+// Date        : Thu Jul 30 22:12:03 2026
 // Host        : DESKTOP-7CFQ9ND running 64-bit major release  (build 9200)
 // Command     : write_verilog -force -mode funcsim
 //               d:/Final_Team_Project/hw/hw.srcs/sources_1/bd/system/ip/system_axis_image_buffer_12_0_0/system_axis_image_buffer_12_0_0_sim_netlist.v
@@ -75,27 +75,32 @@ module system_axis_image_buffer_12_0_0_axis_image_buffer_128x128
     frame_done,
     cnn_read_enable,
     aresetn,
-    cnn_busy,
     aclk,
     cnn_read_addr,
     s_axis_video_tdata,
     s_axis_video_tvalid,
+    cnn_busy,
     s_axis_video_tuser);
   output [7:0]cnn_read_data;
   output frame_done;
   input cnn_read_enable;
   input aresetn;
-  input cnn_busy;
   input aclk;
   input [13:0]cnn_read_addr;
   input [7:0]s_axis_video_tdata;
   input s_axis_video_tvalid;
+  input cnn_busy;
   input s_axis_video_tuser;
 
   wire \FSM_sequential_state[0]_i_1_n_0 ;
+  wire \FSM_sequential_state[0]_i_2_n_0 ;
   wire \FSM_sequential_state[1]_i_1_n_0 ;
   wire \FSM_sequential_state[2]_i_1_n_0 ;
+  wire \FSM_sequential_state[2]_i_2_n_0 ;
   wire \FSM_sequential_state[2]_i_3_n_0 ;
+  wire \FSM_sequential_state[2]_i_4_n_0 ;
+  wire \FSM_sequential_state[2]_i_5_n_0 ;
+  wire \FSM_sequential_state[2]_i_6_n_0 ;
   wire aclk;
   wire aresetn;
   wire [13:0]buffer_write_addr;
@@ -108,16 +113,18 @@ module system_axis_image_buffer_12_0_0_axis_image_buffer_128x128
   wire frame_done_i_1_n_0;
   wire frame_done_i_2_n_0;
   wire frame_done_i_3_n_0;
+  wire frame_done_i_4_n_0;
+  wire frame_done_i_5_n_0;
+  wire image_buffer_reg_3_i_12_n_0;
   wire image_buffer_reg_3_i_2_n_0;
   wire image_buffer_reg_3_i_3_n_0;
-  wire image_buffer_reg_3_i_7_n_0;
-  wire [8:0]p_0_in;
-  wire p_1_in;
+  wire image_buffer_reg_3_i_5_n_0;
+  wire [13:0]p_0_in;
   wire [7:0]s_axis_video_tdata;
   wire s_axis_video_tuser;
   wire s_axis_video_tvalid;
-  wire state;
   wire [2:0]state__0;
+  wire [1:1]state__1;
   wire \write_x[0]_i_1_n_0 ;
   wire \write_x[0]_i_2_n_0 ;
   wire \write_x[1]_i_1_n_0 ;
@@ -126,26 +133,22 @@ module system_axis_image_buffer_12_0_0_axis_image_buffer_128x128
   wire \write_x[4]_i_1_n_0 ;
   wire \write_x[5]_i_1_n_0 ;
   wire \write_x[5]_i_2_n_0 ;
+  wire \write_x[5]_i_3_n_0 ;
   wire \write_x[6]_i_1_n_0 ;
   wire \write_x[6]_i_2_n_0 ;
   wire \write_x[6]_i_3_n_0 ;
-  wire \write_x[6]_i_4_n_0 ;
-  wire \write_x[6]_i_5_n_0 ;
-  wire \write_x[6]_i_6_n_0 ;
-  wire \write_x[6]_i_7_n_0 ;
-  wire \write_x[6]_i_8_n_0 ;
-  wire write_y0_carry_i_1_n_0;
-  wire write_y0_carry_i_2_n_0;
-  wire write_y0_carry_i_3_n_0;
-  wire write_y0_carry_i_4_n_0;
-  wire write_y0_carry_i_5_n_0;
-  wire write_y0_carry_n_2;
-  wire write_y0_carry_n_3;
   wire \write_y[0]_i_1_n_0 ;
-  wire \write_y[0]_i_2_n_0 ;
   wire \write_y[1]_i_1_n_0 ;
-  wire \write_y[1]_i_2_n_0 ;
-  wire \write_y[1]_i_3_n_0 ;
+  wire \write_y[2]_i_1_n_0 ;
+  wire \write_y[3]_i_1_n_0 ;
+  wire \write_y[4]_i_1_n_0 ;
+  wire \write_y[5]_i_1_n_0 ;
+  wire \write_y[6]_i_1_n_0 ;
+  wire \write_y[6]_i_2_n_0 ;
+  wire \write_y[6]_i_3_n_0 ;
+  wire \write_y[6]_i_4_n_0 ;
+  wire \write_y[6]_i_5_n_0 ;
+  wire \write_y[6]_i_6_n_0 ;
   wire NLW_image_buffer_reg_0_CASCADEOUTA_UNCONNECTED;
   wire NLW_image_buffer_reg_0_CASCADEOUTB_UNCONNECTED;
   wire NLW_image_buffer_reg_0_DBITERR_UNCONNECTED;
@@ -194,59 +197,98 @@ module system_axis_image_buffer_12_0_0_axis_image_buffer_128x128
   wire [3:0]NLW_image_buffer_reg_3_DOPBDOP_UNCONNECTED;
   wire [7:0]NLW_image_buffer_reg_3_ECCPARITY_UNCONNECTED;
   wire [8:0]NLW_image_buffer_reg_3_RDADDRECC_UNCONNECTED;
-  wire [3:3]NLW_write_y0_carry_CO_UNCONNECTED;
-  wire [3:0]NLW_write_y0_carry_O_UNCONNECTED;
 
-  (* SOFT_HLUTNM = "soft_lutpair0" *) 
-  LUT5 #(
-    .INIT(32'h26660000)) 
+  LUT6 #(
+    .INIT(64'hFBAA08AA00000000)) 
     \FSM_sequential_state[0]_i_1 
        (.I0(state__0[0]),
-        .I1(state),
-        .I2(state__0[2]),
-        .I3(state__0[1]),
-        .I4(aresetn),
+        .I1(\FSM_sequential_state[2]_i_2_n_0 ),
+        .I2(\FSM_sequential_state[2]_i_3_n_0 ),
+        .I3(\FSM_sequential_state[2]_i_4_n_0 ),
+        .I4(\FSM_sequential_state[0]_i_2_n_0 ),
+        .I5(aresetn),
         .O(\FSM_sequential_state[0]_i_1_n_0 ));
+  (* SOFT_HLUTNM = "soft_lutpair4" *) 
+  LUT3 #(
+    .INIT(8'h15)) 
+    \FSM_sequential_state[0]_i_2 
+       (.I0(state__0[0]),
+        .I1(state__0[1]),
+        .I2(state__0[2]),
+        .O(\FSM_sequential_state[0]_i_2_n_0 ));
   LUT6 #(
-    .INIT(64'h222A226A00000000)) 
+    .INIT(64'hFBAA08AA00000000)) 
     \FSM_sequential_state[1]_i_1 
        (.I0(state__0[1]),
-        .I1(state),
-        .I2(state__0[0]),
-        .I3(state__0[2]),
-        .I4(cnn_busy),
+        .I1(\FSM_sequential_state[2]_i_2_n_0 ),
+        .I2(\FSM_sequential_state[2]_i_3_n_0 ),
+        .I3(\FSM_sequential_state[2]_i_4_n_0 ),
+        .I4(state__1),
         .I5(aresetn),
         .O(\FSM_sequential_state[1]_i_1_n_0 ));
-  (* SOFT_HLUTNM = "soft_lutpair0" *) 
-  LUT5 #(
-    .INIT(32'h62220000)) 
+  (* SOFT_HLUTNM = "soft_lutpair1" *) 
+  LUT4 #(
+    .INIT(16'h010C)) 
+    \FSM_sequential_state[1]_i_2 
+       (.I0(cnn_busy),
+        .I1(state__0[1]),
+        .I2(state__0[2]),
+        .I3(state__0[0]),
+        .O(state__1));
+  LUT6 #(
+    .INIT(64'h08AAFBAA00000000)) 
     \FSM_sequential_state[2]_i_1 
        (.I0(state__0[2]),
-        .I1(state),
-        .I2(state__0[0]),
-        .I3(state__0[1]),
-        .I4(aresetn),
+        .I1(\FSM_sequential_state[2]_i_2_n_0 ),
+        .I2(\FSM_sequential_state[2]_i_3_n_0 ),
+        .I3(\FSM_sequential_state[2]_i_4_n_0 ),
+        .I4(\FSM_sequential_state[2]_i_5_n_0 ),
+        .I5(aresetn),
         .O(\FSM_sequential_state[2]_i_1_n_0 ));
-  LUT6 #(
-    .INIT(64'h00000000FFFF0400)) 
+  LUT5 #(
+    .INIT(32'hFFFEFFFF)) 
     \FSM_sequential_state[2]_i_2 
-       (.I0(write_y0_carry_i_1_n_0),
-        .I1(\write_x[6]_i_5_n_0 ),
-        .I2(\write_x[6]_i_6_n_0 ),
-        .I3(frame_done_i_3_n_0),
-        .I4(\FSM_sequential_state[2]_i_3_n_0 ),
-        .I5(\write_y[1]_i_3_n_0 ),
-        .O(state));
+       (.I0(\write_y[6]_i_6_n_0 ),
+        .I1(frame_done_i_5_n_0),
+        .I2(\write_x[5]_i_2_n_0 ),
+        .I3(\FSM_sequential_state[2]_i_6_n_0 ),
+        .I4(frame_done_i_4_n_0),
+        .O(\FSM_sequential_state[2]_i_2_n_0 ));
   LUT6 #(
-    .INIT(64'h00F0FF000FF0FF8F)) 
+    .INIT(64'h0F0FF0000FFFF80F)) 
     \FSM_sequential_state[2]_i_3 
        (.I0(s_axis_video_tuser),
         .I1(s_axis_video_tvalid),
-        .I2(state__0[0]),
-        .I3(state__0[2]),
-        .I4(cnn_busy),
+        .I2(cnn_busy),
+        .I3(state__0[0]),
+        .I4(state__0[2]),
         .I5(state__0[1]),
         .O(\FSM_sequential_state[2]_i_3_n_0 ));
+  (* SOFT_HLUTNM = "soft_lutpair1" *) 
+  LUT4 #(
+    .INIT(16'hFDFF)) 
+    \FSM_sequential_state[2]_i_4 
+       (.I0(cnn_busy),
+        .I1(state__0[1]),
+        .I2(state__0[0]),
+        .I3(state__0[2]),
+        .O(\FSM_sequential_state[2]_i_4_n_0 ));
+  (* SOFT_HLUTNM = "soft_lutpair4" *) 
+  LUT3 #(
+    .INIT(8'hDF)) 
+    \FSM_sequential_state[2]_i_5 
+       (.I0(state__0[0]),
+        .I1(state__0[2]),
+        .I2(state__0[1]),
+        .O(\FSM_sequential_state[2]_i_5_n_0 ));
+  (* SOFT_HLUTNM = "soft_lutpair2" *) 
+  LUT3 #(
+    .INIT(8'h7F)) 
+    \FSM_sequential_state[2]_i_6 
+       (.I0(p_0_in[6]),
+        .I1(p_0_in[4]),
+        .I2(p_0_in[5]),
+        .O(\FSM_sequential_state[2]_i_6_n_0 ));
   (* FSM_ENCODED_STATES = "WAIT_SOF:001,FRAME_READY:011,WAIT_CNN:100,CAPTURE:010,WAIT_IDLE:000" *) 
   FDRE \FSM_sequential_state_reg[0] 
        (.C(aclk),
@@ -269,34 +311,48 @@ module system_axis_image_buffer_12_0_0_axis_image_buffer_128x128
         .Q(state__0[2]),
         .R(1'b0));
   LUT6 #(
-    .INIT(64'h0400FFFF00000000)) 
+    .INIT(64'hFF04040400000000)) 
     frame_done_i_1
        (.I0(cnn_busy),
         .I1(state__0[1]),
-        .I2(state__0[2]),
-        .I3(state__0[0]),
-        .I4(frame_done_i_2_n_0),
+        .I2(frame_done_i_2_n_0),
+        .I3(frame_done_i_3_n_0),
+        .I4(frame_done_i_4_n_0),
         .I5(aresetn),
         .O(frame_done_i_1_n_0));
-  LUT6 #(
-    .INIT(64'hBFFFFFFFFFFFFFFF)) 
+  (* SOFT_HLUTNM = "soft_lutpair5" *) 
+  LUT2 #(
+    .INIT(4'hB)) 
     frame_done_i_2
-       (.I0(write_y0_carry_i_1_n_0),
-        .I1(\write_x[6]_i_5_n_0 ),
-        .I2(p_0_in[5]),
-        .I3(p_0_in[4]),
-        .I4(p_0_in[6]),
-        .I5(frame_done_i_3_n_0),
+       (.I0(state__0[2]),
+        .I1(state__0[0]),
         .O(frame_done_i_2_n_0));
+  LUT6 #(
+    .INIT(64'h0000000000000080)) 
+    frame_done_i_3
+       (.I0(p_0_in[6]),
+        .I1(p_0_in[4]),
+        .I2(p_0_in[5]),
+        .I3(\write_x[5]_i_2_n_0 ),
+        .I4(frame_done_i_5_n_0),
+        .I5(\write_y[6]_i_6_n_0 ),
+        .O(frame_done_i_3_n_0));
   (* SOFT_HLUTNM = "soft_lutpair3" *) 
   LUT4 #(
-    .INIT(16'h0008)) 
-    frame_done_i_3
+    .INIT(16'h0020)) 
+    frame_done_i_4
        (.I0(s_axis_video_tvalid),
-        .I1(state__0[1]),
-        .I2(state__0[2]),
+        .I1(state__0[2]),
+        .I2(state__0[1]),
         .I3(state__0[0]),
-        .O(frame_done_i_3_n_0));
+        .O(frame_done_i_4_n_0));
+  LUT3 #(
+    .INIT(8'h7F)) 
+    frame_done_i_5
+       (.I0(p_0_in[13]),
+        .I1(p_0_in[11]),
+        .I2(p_0_in[12]),
+        .O(frame_done_i_5_n_0));
   FDRE frame_done_reg
        (.C(aclk),
         .CE(1'b1),
@@ -338,7 +394,7 @@ module system_axis_image_buffer_12_0_0_axis_image_buffer_128x128
     .WRITE_WIDTH_A(2),
     .WRITE_WIDTH_B(2)) 
     image_buffer_reg_0
-       (.ADDRARDADDR({1'b1,buffer_write_addr[13],buffer_write_addr[13],buffer_write_addr[13],buffer_write_addr[13],buffer_write_addr[13],buffer_write_addr[13],buffer_write_addr[7:6],image_buffer_reg_3_i_7_n_0,buffer_write_addr[4:0],1'b1}),
+       (.ADDRARDADDR({1'b1,buffer_write_addr[13],image_buffer_reg_3_i_5_n_0,buffer_write_addr[11:6],image_buffer_reg_3_i_12_n_0,buffer_write_addr[4:0],1'b1}),
         .ADDRBWRADDR({1'b1,cnn_read_addr,1'b1}),
         .CASCADEINA(1'b1),
         .CASCADEINB(1'b1),
@@ -405,7 +461,7 @@ module system_axis_image_buffer_12_0_0_axis_image_buffer_128x128
     .WRITE_WIDTH_A(2),
     .WRITE_WIDTH_B(2)) 
     image_buffer_reg_1
-       (.ADDRARDADDR({1'b1,buffer_write_addr[13],buffer_write_addr[13],buffer_write_addr[13],buffer_write_addr[13],buffer_write_addr[13],buffer_write_addr[13],buffer_write_addr[7:6],image_buffer_reg_3_i_7_n_0,buffer_write_addr[4:0],1'b1}),
+       (.ADDRARDADDR({1'b1,buffer_write_addr[13],image_buffer_reg_3_i_5_n_0,buffer_write_addr[11:6],image_buffer_reg_3_i_12_n_0,buffer_write_addr[4:0],1'b1}),
         .ADDRBWRADDR({1'b1,cnn_read_addr,1'b1}),
         .CASCADEINA(1'b1),
         .CASCADEINB(1'b1),
@@ -472,7 +528,7 @@ module system_axis_image_buffer_12_0_0_axis_image_buffer_128x128
     .WRITE_WIDTH_A(2),
     .WRITE_WIDTH_B(2)) 
     image_buffer_reg_2
-       (.ADDRARDADDR({1'b1,buffer_write_addr[13],buffer_write_addr[13],buffer_write_addr[13],buffer_write_addr[13],buffer_write_addr[13],buffer_write_addr[13],buffer_write_addr[7:6],image_buffer_reg_3_i_7_n_0,buffer_write_addr[4:0],1'b1}),
+       (.ADDRARDADDR({1'b1,buffer_write_addr[13],image_buffer_reg_3_i_5_n_0,buffer_write_addr[11:6],image_buffer_reg_3_i_12_n_0,buffer_write_addr[4:0],1'b1}),
         .ADDRBWRADDR({1'b1,cnn_read_addr,1'b1}),
         .CASCADEINA(1'b1),
         .CASCADEINB(1'b1),
@@ -539,7 +595,7 @@ module system_axis_image_buffer_12_0_0_axis_image_buffer_128x128
     .WRITE_WIDTH_A(2),
     .WRITE_WIDTH_B(2)) 
     image_buffer_reg_3
-       (.ADDRARDADDR({1'b1,buffer_write_addr[13],buffer_write_addr[13],buffer_write_addr[13],buffer_write_addr[13],buffer_write_addr[13],buffer_write_addr[13],buffer_write_addr[7:6],image_buffer_reg_3_i_7_n_0,buffer_write_addr[4:0],1'b1}),
+       (.ADDRARDADDR({1'b1,buffer_write_addr[13],image_buffer_reg_3_i_5_n_0,buffer_write_addr[11:6],image_buffer_reg_3_i_12_n_0,buffer_write_addr[4:0],1'b1}),
         .ADDRBWRADDR({1'b1,cnn_read_addr,1'b1}),
         .CASCADEINA(1'b1),
         .CASCADEINB(1'b1),
@@ -583,6 +639,46 @@ module system_axis_image_buffer_12_0_0_axis_image_buffer_128x128
   LUT4 #(
     .INIT(16'hA8AA)) 
     image_buffer_reg_3_i_10
+       (.I0(p_0_in[7]),
+        .I1(state__0[2]),
+        .I2(state__0[1]),
+        .I3(state__0[0]),
+        .O(buffer_write_addr[7]));
+  LUT4 #(
+    .INIT(16'hA8AA)) 
+    image_buffer_reg_3_i_11
+       (.I0(p_0_in[6]),
+        .I1(state__0[2]),
+        .I2(state__0[1]),
+        .I3(state__0[0]),
+        .O(buffer_write_addr[6]));
+  LUT4 #(
+    .INIT(16'hEF00)) 
+    image_buffer_reg_3_i_12
+       (.I0(state__0[2]),
+        .I1(state__0[1]),
+        .I2(state__0[0]),
+        .I3(p_0_in[5]),
+        .O(image_buffer_reg_3_i_12_n_0));
+  LUT4 #(
+    .INIT(16'hA8AA)) 
+    image_buffer_reg_3_i_13
+       (.I0(p_0_in[4]),
+        .I1(state__0[2]),
+        .I2(state__0[1]),
+        .I3(state__0[0]),
+        .O(buffer_write_addr[4]));
+  LUT4 #(
+    .INIT(16'hA8AA)) 
+    image_buffer_reg_3_i_14
+       (.I0(p_0_in[3]),
+        .I1(state__0[2]),
+        .I2(state__0[1]),
+        .I3(state__0[0]),
+        .O(buffer_write_addr[3]));
+  LUT4 #(
+    .INIT(16'hA8AA)) 
+    image_buffer_reg_3_i_15
        (.I0(p_0_in[2]),
         .I1(state__0[2]),
         .I2(state__0[1]),
@@ -590,7 +686,7 @@ module system_axis_image_buffer_12_0_0_axis_image_buffer_128x128
         .O(buffer_write_addr[2]));
   LUT4 #(
     .INIT(16'hA8AA)) 
-    image_buffer_reg_3_i_11
+    image_buffer_reg_3_i_16
        (.I0(p_0_in[1]),
         .I1(state__0[2]),
         .I2(state__0[1]),
@@ -598,7 +694,7 @@ module system_axis_image_buffer_12_0_0_axis_image_buffer_128x128
         .O(buffer_write_addr[1]));
   LUT4 #(
     .INIT(16'hA8AA)) 
-    image_buffer_reg_3_i_12
+    image_buffer_reg_3_i_17
        (.I0(p_0_in[0]),
         .I1(state__0[2]),
         .I2(state__0[1]),
@@ -618,58 +714,58 @@ module system_axis_image_buffer_12_0_0_axis_image_buffer_128x128
   LUT4 #(
     .INIT(16'hA8AA)) 
     image_buffer_reg_3_i_4
-       (.I0(p_0_in[8]),
+       (.I0(p_0_in[13]),
         .I1(state__0[2]),
         .I2(state__0[1]),
         .I3(state__0[0]),
         .O(buffer_write_addr[13]));
   LUT4 #(
-    .INIT(16'hA8AA)) 
-    image_buffer_reg_3_i_5
-       (.I0(p_0_in[7]),
-        .I1(state__0[2]),
-        .I2(state__0[1]),
-        .I3(state__0[0]),
-        .O(buffer_write_addr[7]));
-  LUT4 #(
-    .INIT(16'hA8AA)) 
-    image_buffer_reg_3_i_6
-       (.I0(p_0_in[6]),
-        .I1(state__0[2]),
-        .I2(state__0[1]),
-        .I3(state__0[0]),
-        .O(buffer_write_addr[6]));
-  LUT4 #(
     .INIT(16'hEF00)) 
-    image_buffer_reg_3_i_7
+    image_buffer_reg_3_i_5
        (.I0(state__0[2]),
         .I1(state__0[1]),
         .I2(state__0[0]),
-        .I3(p_0_in[5]),
-        .O(image_buffer_reg_3_i_7_n_0));
+        .I3(p_0_in[12]),
+        .O(image_buffer_reg_3_i_5_n_0));
+  LUT4 #(
+    .INIT(16'hA8AA)) 
+    image_buffer_reg_3_i_6
+       (.I0(p_0_in[11]),
+        .I1(state__0[2]),
+        .I2(state__0[1]),
+        .I3(state__0[0]),
+        .O(buffer_write_addr[11]));
+  LUT4 #(
+    .INIT(16'hA8AA)) 
+    image_buffer_reg_3_i_7
+       (.I0(p_0_in[10]),
+        .I1(state__0[2]),
+        .I2(state__0[1]),
+        .I3(state__0[0]),
+        .O(buffer_write_addr[10]));
   LUT4 #(
     .INIT(16'hA8AA)) 
     image_buffer_reg_3_i_8
-       (.I0(p_0_in[4]),
+       (.I0(p_0_in[9]),
         .I1(state__0[2]),
         .I2(state__0[1]),
         .I3(state__0[0]),
-        .O(buffer_write_addr[4]));
+        .O(buffer_write_addr[9]));
   LUT4 #(
     .INIT(16'hA8AA)) 
     image_buffer_reg_3_i_9
-       (.I0(p_0_in[3]),
+       (.I0(p_0_in[8]),
         .I1(state__0[2]),
         .I2(state__0[1]),
         .I3(state__0[0]),
-        .O(buffer_write_addr[3]));
+        .O(buffer_write_addr[8]));
   LUT6 #(
-    .INIT(64'h003022320C3C0030)) 
+    .INIT(64'h003000BA0F300030)) 
     \write_x[0]_i_1 
        (.I0(\write_x[0]_i_2_n_0 ),
-        .I1(state__0[2]),
+        .I1(p_0_in[0]),
         .I2(state__0[1]),
-        .I3(p_0_in[0]),
+        .I3(state__0[2]),
         .I4(cnn_busy),
         .I5(state__0[0]),
         .O(\write_x[0]_i_1_n_0 ));
@@ -690,121 +786,90 @@ module system_axis_image_buffer_12_0_0_axis_image_buffer_128x128
         .I5(state__0[1]),
         .O(\write_x[1]_i_1_n_0 ));
   LUT5 #(
-    .INIT(32'h2888AAAA)) 
+    .INIT(32'h2AA2A2A2)) 
     \write_x[2]_i_1 
-       (.I0(\write_x[5]_i_2_n_0 ),
-        .I1(p_0_in[2]),
-        .I2(p_0_in[1]),
-        .I3(p_0_in[0]),
-        .I4(state__0[1]),
+       (.I0(\write_x[5]_i_3_n_0 ),
+        .I1(state__0[1]),
+        .I2(p_0_in[2]),
+        .I3(p_0_in[1]),
+        .I4(p_0_in[0]),
         .O(\write_x[2]_i_1_n_0 ));
   LUT6 #(
-    .INIT(64'h2AA2A2A2A2A2A2A2)) 
+    .INIT(64'h28888888AAAAAAAA)) 
     \write_x[3]_i_1 
-       (.I0(\write_x[5]_i_2_n_0 ),
-        .I1(state__0[1]),
-        .I2(p_0_in[3]),
-        .I3(p_0_in[0]),
-        .I4(p_0_in[1]),
-        .I5(p_0_in[2]),
+       (.I0(\write_x[5]_i_3_n_0 ),
+        .I1(p_0_in[3]),
+        .I2(p_0_in[0]),
+        .I3(p_0_in[1]),
+        .I4(p_0_in[2]),
+        .I5(state__0[1]),
         .O(\write_x[3]_i_1_n_0 ));
   LUT6 #(
-    .INIT(64'h0003030008080808)) 
+    .INIT(64'h0308000800080308)) 
     \write_x[4]_i_1 
        (.I0(cnn_busy),
         .I1(state__0[2]),
         .I2(state__0[0]),
-        .I3(p_0_in[4]),
-        .I4(\write_x[6]_i_5_n_0 ),
-        .I5(state__0[1]),
+        .I3(state__0[1]),
+        .I4(p_0_in[4]),
+        .I5(\write_x[5]_i_2_n_0 ),
         .O(\write_x[4]_i_1_n_0 ));
   LUT5 #(
-    .INIT(32'h7DDD0000)) 
+    .INIT(32'hD7DD0000)) 
     \write_x[5]_i_1 
        (.I0(state__0[1]),
         .I1(p_0_in[5]),
-        .I2(\write_x[6]_i_5_n_0 ),
+        .I2(\write_x[5]_i_2_n_0 ),
         .I3(p_0_in[4]),
-        .I4(\write_x[5]_i_2_n_0 ),
+        .I4(\write_x[5]_i_3_n_0 ),
         .O(\write_x[5]_i_1_n_0 ));
-  (* SOFT_HLUTNM = "soft_lutpair1" *) 
+  LUT4 #(
+    .INIT(16'h7FFF)) 
+    \write_x[5]_i_2 
+       (.I0(p_0_in[1]),
+        .I1(p_0_in[0]),
+        .I2(p_0_in[3]),
+        .I3(p_0_in[2]),
+        .O(\write_x[5]_i_2_n_0 ));
+  (* SOFT_HLUTNM = "soft_lutpair0" *) 
   LUT4 #(
     .INIT(16'h1410)) 
-    \write_x[5]_i_2 
+    \write_x[5]_i_3 
        (.I0(state__0[0]),
         .I1(state__0[2]),
         .I2(state__0[1]),
         .I3(cnn_busy),
-        .O(\write_x[5]_i_2_n_0 ));
+        .O(\write_x[5]_i_3_n_0 ));
   LUT6 #(
-    .INIT(64'h88888888AAAAA8AA)) 
+    .INIT(64'h010F015F010F010F)) 
     \write_x[6]_i_1 
-       (.I0(\write_x[6]_i_3_n_0 ),
-        .I1(\write_x[6]_i_4_n_0 ),
-        .I2(write_y0_carry_i_1_n_0),
-        .I3(\write_x[6]_i_5_n_0 ),
-        .I4(\write_x[6]_i_6_n_0 ),
-        .I5(\write_x[6]_i_7_n_0 ),
+       (.I0(state__0[0]),
+        .I1(cnn_busy),
+        .I2(state__0[1]),
+        .I3(state__0[2]),
+        .I4(frame_done_i_3_n_0),
+        .I5(s_axis_video_tvalid),
         .O(\write_x[6]_i_1_n_0 ));
   LUT6 #(
-    .INIT(64'h0000000000F09900)) 
+    .INIT(64'h0000000000F06600)) 
     \write_x[6]_i_2 
-       (.I0(\write_x[6]_i_8_n_0 ),
+       (.I0(\write_x[6]_i_3_n_0 ),
         .I1(p_0_in[6]),
         .I2(cnn_busy),
         .I3(state__0[1]),
         .I4(state__0[2]),
         .I5(state__0[0]),
         .O(\write_x[6]_i_2_n_0 ));
-  (* SOFT_HLUTNM = "soft_lutpair3" *) 
-  LUT3 #(
-    .INIT(8'h1F)) 
-    \write_x[6]_i_3 
-       (.I0(state__0[1]),
-        .I1(state__0[2]),
-        .I2(state__0[0]),
-        .O(\write_x[6]_i_3_n_0 ));
-  (* SOFT_HLUTNM = "soft_lutpair4" *) 
-  LUT3 #(
-    .INIT(8'h13)) 
-    \write_x[6]_i_4 
-       (.I0(cnn_busy),
-        .I1(state__0[1]),
-        .I2(state__0[2]),
-        .O(\write_x[6]_i_4_n_0 ));
-  LUT4 #(
-    .INIT(16'h8000)) 
-    \write_x[6]_i_5 
-       (.I0(p_0_in[1]),
-        .I1(p_0_in[0]),
-        .I2(p_0_in[3]),
-        .I3(p_0_in[2]),
-        .O(\write_x[6]_i_5_n_0 ));
-  (* SOFT_HLUTNM = "soft_lutpair2" *) 
-  LUT3 #(
-    .INIT(8'h7F)) 
-    \write_x[6]_i_6 
-       (.I0(p_0_in[6]),
-        .I1(p_0_in[4]),
-        .I2(p_0_in[5]),
-        .O(\write_x[6]_i_6_n_0 ));
-  (* SOFT_HLUTNM = "soft_lutpair4" *) 
-  LUT2 #(
-    .INIT(4'hB)) 
-    \write_x[6]_i_7 
-       (.I0(state__0[2]),
-        .I1(s_axis_video_tvalid),
-        .O(\write_x[6]_i_7_n_0 ));
   LUT6 #(
-    .INIT(64'h7FFFFFFFFFFFFFFF)) 
-    \write_x[6]_i_8 
+    .INIT(64'h8000000000000000)) 
+    \write_x[6]_i_3 
        (.I0(p_0_in[1]),
         .I1(p_0_in[0]),
         .I2(p_0_in[3]),
         .I3(p_0_in[2]),
         .I4(p_0_in[4]),
         .I5(p_0_in[5]),
-        .O(\write_x[6]_i_8_n_0 ));
+        .O(\write_x[6]_i_3_n_0 ));
   FDRE \write_x_reg[0] 
        (.C(aclk),
         .CE(\write_x[6]_i_1_n_0 ),
@@ -847,104 +912,159 @@ module system_axis_image_buffer_12_0_0_axis_image_buffer_128x128
         .D(\write_x[6]_i_2_n_0 ),
         .Q(p_0_in[6]),
         .R(image_buffer_reg_3_i_3_n_0));
-  (* COMPARATOR_THRESHOLD = "11" *) 
-  CARRY4 write_y0_carry
-       (.CI(1'b0),
-        .CO({NLW_write_y0_carry_CO_UNCONNECTED[3],p_1_in,write_y0_carry_n_2,write_y0_carry_n_3}),
-        .CYINIT(write_y0_carry_i_1_n_0),
-        .DI({1'b0,write_y0_carry_i_2_n_0,1'b0,1'b0}),
-        .O(NLW_write_y0_carry_O_UNCONNECTED[3:0]),
-        .S({1'b0,write_y0_carry_i_3_n_0,write_y0_carry_i_4_n_0,write_y0_carry_i_5_n_0}));
-  LUT2 #(
-    .INIT(4'h7)) 
-    write_y0_carry_i_1
-       (.I0(p_0_in[8]),
-        .I1(p_0_in[7]),
-        .O(write_y0_carry_i_1_n_0));
-  LUT2 #(
-    .INIT(4'h8)) 
-    write_y0_carry_i_2
-       (.I0(p_0_in[7]),
-        .I1(p_0_in[8]),
-        .O(write_y0_carry_i_2_n_0));
-  LUT2 #(
-    .INIT(4'h7)) 
-    write_y0_carry_i_3
-       (.I0(p_0_in[8]),
-        .I1(p_0_in[7]),
-        .O(write_y0_carry_i_3_n_0));
-  LUT2 #(
-    .INIT(4'h7)) 
-    write_y0_carry_i_4
-       (.I0(p_0_in[8]),
-        .I1(p_0_in[7]),
-        .O(write_y0_carry_i_4_n_0));
-  LUT2 #(
-    .INIT(4'h7)) 
-    write_y0_carry_i_5
-       (.I0(p_0_in[8]),
-        .I1(p_0_in[7]),
-        .O(write_y0_carry_i_5_n_0));
-  LUT6 #(
-    .INIT(64'hEE2E222200000000)) 
+  (* SOFT_HLUTNM = "soft_lutpair0" *) 
+  LUT5 #(
+    .INIT(32'h00080308)) 
     \write_y[0]_i_1 
-       (.I0(p_0_in[7]),
-        .I1(\write_y[0]_i_2_n_0 ),
-        .I2(state__0[1]),
-        .I3(p_1_in),
-        .I4(\write_x[5]_i_2_n_0 ),
-        .I5(aresetn),
+       (.I0(cnn_busy),
+        .I1(state__0[2]),
+        .I2(state__0[0]),
+        .I3(state__0[1]),
+        .I4(p_0_in[7]),
         .O(\write_y[0]_i_1_n_0 ));
   LUT6 #(
-    .INIT(64'hF000F000F040F000)) 
-    \write_y[0]_i_2 
-       (.I0(\write_x[6]_i_7_n_0 ),
-        .I1(write_y0_carry_i_1_n_0),
-        .I2(\write_x[6]_i_3_n_0 ),
-        .I3(\write_x[6]_i_4_n_0 ),
-        .I4(\write_x[6]_i_5_n_0 ),
-        .I5(\write_x[6]_i_6_n_0 ),
-        .O(\write_y[0]_i_2_n_0 ));
-  LUT6 #(
-    .INIT(64'hFEAA02AA00000000)) 
+    .INIT(64'h0003030008080808)) 
     \write_y[1]_i_1 
-       (.I0(p_0_in[8]),
-        .I1(\write_y[1]_i_2_n_0 ),
-        .I2(\write_x[6]_i_4_n_0 ),
-        .I3(\write_x[6]_i_1_n_0 ),
-        .I4(\write_y[1]_i_3_n_0 ),
-        .I5(aresetn),
+       (.I0(cnn_busy),
+        .I1(state__0[2]),
+        .I2(state__0[0]),
+        .I3(p_0_in[7]),
+        .I4(p_0_in[8]),
+        .I5(state__0[1]),
         .O(\write_y[1]_i_1_n_0 ));
+  LUT5 #(
+    .INIT(32'h2AA2A2A2)) 
+    \write_y[2]_i_1 
+       (.I0(\write_x[5]_i_3_n_0 ),
+        .I1(state__0[1]),
+        .I2(p_0_in[9]),
+        .I3(p_0_in[8]),
+        .I4(p_0_in[7]),
+        .O(\write_y[2]_i_1_n_0 ));
+  LUT6 #(
+    .INIT(64'h28888888AAAAAAAA)) 
+    \write_y[3]_i_1 
+       (.I0(\write_x[5]_i_3_n_0 ),
+        .I1(p_0_in[10]),
+        .I2(p_0_in[7]),
+        .I3(p_0_in[8]),
+        .I4(p_0_in[9]),
+        .I5(state__0[1]),
+        .O(\write_y[3]_i_1_n_0 ));
+  LUT6 #(
+    .INIT(64'h0308000800080308)) 
+    \write_y[4]_i_1 
+       (.I0(cnn_busy),
+        .I1(state__0[2]),
+        .I2(state__0[0]),
+        .I3(state__0[1]),
+        .I4(p_0_in[11]),
+        .I5(\write_y[6]_i_6_n_0 ),
+        .O(\write_y[4]_i_1_n_0 ));
+  LUT5 #(
+    .INIT(32'h8288AAAA)) 
+    \write_y[5]_i_1 
+       (.I0(\write_x[5]_i_3_n_0 ),
+        .I1(p_0_in[12]),
+        .I2(\write_y[6]_i_6_n_0 ),
+        .I3(p_0_in[11]),
+        .I4(state__0[1]),
+        .O(\write_y[5]_i_1_n_0 ));
+  LUT6 #(
+    .INIT(64'hFF000000FF000400)) 
+    \write_y[6]_i_1 
+       (.I0(state__0[2]),
+        .I1(s_axis_video_tvalid),
+        .I2(frame_done_i_3_n_0),
+        .I3(\write_y[6]_i_3_n_0 ),
+        .I4(\write_y[6]_i_4_n_0 ),
+        .I5(\write_y[6]_i_5_n_0 ),
+        .O(\write_y[6]_i_1_n_0 ));
+  LUT6 #(
+    .INIT(64'h88882888AAAAAAAA)) 
+    \write_y[6]_i_2 
+       (.I0(\write_x[5]_i_3_n_0 ),
+        .I1(p_0_in[13]),
+        .I2(p_0_in[12]),
+        .I3(p_0_in[11]),
+        .I4(\write_y[6]_i_6_n_0 ),
+        .I5(state__0[1]),
+        .O(\write_y[6]_i_2_n_0 ));
+  (* SOFT_HLUTNM = "soft_lutpair3" *) 
+  LUT3 #(
+    .INIT(8'h1F)) 
+    \write_y[6]_i_3 
+       (.I0(state__0[1]),
+        .I1(state__0[2]),
+        .I2(state__0[0]),
+        .O(\write_y[6]_i_3_n_0 ));
+  (* SOFT_HLUTNM = "soft_lutpair5" *) 
+  LUT3 #(
+    .INIT(8'h13)) 
+    \write_y[6]_i_4 
+       (.I0(cnn_busy),
+        .I1(state__0[1]),
+        .I2(state__0[2]),
+        .O(\write_y[6]_i_4_n_0 ));
   (* SOFT_HLUTNM = "soft_lutpair2" *) 
   LUT4 #(
-    .INIT(16'h8000)) 
-    \write_y[1]_i_2 
-       (.I0(\write_x[6]_i_5_n_0 ),
+    .INIT(16'hBFFF)) 
+    \write_y[6]_i_5 
+       (.I0(\write_x[5]_i_2_n_0 ),
         .I1(p_0_in[5]),
         .I2(p_0_in[4]),
         .I3(p_0_in[6]),
-        .O(\write_y[1]_i_2_n_0 ));
-  (* SOFT_HLUTNM = "soft_lutpair1" *) 
+        .O(\write_y[6]_i_5_n_0 ));
   LUT4 #(
-    .INIT(16'h0008)) 
-    \write_y[1]_i_3 
-       (.I0(cnn_busy),
-        .I1(state__0[2]),
-        .I2(state__0[1]),
-        .I3(state__0[0]),
-        .O(\write_y[1]_i_3_n_0 ));
+    .INIT(16'h7FFF)) 
+    \write_y[6]_i_6 
+       (.I0(p_0_in[8]),
+        .I1(p_0_in[7]),
+        .I2(p_0_in[10]),
+        .I3(p_0_in[9]),
+        .O(\write_y[6]_i_6_n_0 ));
   FDRE \write_y_reg[0] 
        (.C(aclk),
-        .CE(1'b1),
+        .CE(\write_y[6]_i_1_n_0 ),
         .D(\write_y[0]_i_1_n_0 ),
         .Q(p_0_in[7]),
-        .R(1'b0));
+        .R(image_buffer_reg_3_i_3_n_0));
   FDRE \write_y_reg[1] 
        (.C(aclk),
-        .CE(1'b1),
+        .CE(\write_y[6]_i_1_n_0 ),
         .D(\write_y[1]_i_1_n_0 ),
         .Q(p_0_in[8]),
-        .R(1'b0));
+        .R(image_buffer_reg_3_i_3_n_0));
+  FDRE \write_y_reg[2] 
+       (.C(aclk),
+        .CE(\write_y[6]_i_1_n_0 ),
+        .D(\write_y[2]_i_1_n_0 ),
+        .Q(p_0_in[9]),
+        .R(image_buffer_reg_3_i_3_n_0));
+  FDRE \write_y_reg[3] 
+       (.C(aclk),
+        .CE(\write_y[6]_i_1_n_0 ),
+        .D(\write_y[3]_i_1_n_0 ),
+        .Q(p_0_in[10]),
+        .R(image_buffer_reg_3_i_3_n_0));
+  FDRE \write_y_reg[4] 
+       (.C(aclk),
+        .CE(\write_y[6]_i_1_n_0 ),
+        .D(\write_y[4]_i_1_n_0 ),
+        .Q(p_0_in[11]),
+        .R(image_buffer_reg_3_i_3_n_0));
+  FDRE \write_y_reg[5] 
+       (.C(aclk),
+        .CE(\write_y[6]_i_1_n_0 ),
+        .D(\write_y[5]_i_1_n_0 ),
+        .Q(p_0_in[12]),
+        .R(image_buffer_reg_3_i_3_n_0));
+  FDRE \write_y_reg[6] 
+       (.C(aclk),
+        .CE(\write_y[6]_i_1_n_0 ),
+        .D(\write_y[6]_i_2_n_0 ),
+        .Q(p_0_in[13]),
+        .R(image_buffer_reg_3_i_3_n_0));
 endmodule
 `ifndef GLBL
 `define GLBL

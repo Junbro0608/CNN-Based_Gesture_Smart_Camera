@@ -1,7 +1,7 @@
 --Copyright 1986-2020 Xilinx, Inc. All Rights Reserved.
 ----------------------------------------------------------------------------------
 --Tool Version: Vivado v.2020.2 (win64) Build 3064766 Wed Nov 18 09:12:45 MST 2020
---Date        : Thu Jul 30 17:49:21 2026
+--Date        : Thu Jul 30 22:11:04 2026
 --Host        : DESKTOP-7CFQ9ND running 64-bit major release  (build 9200)
 --Command     : generate_target system.bd
 --Design      : system
@@ -3449,22 +3449,6 @@ architecture STRUCTURE of system is
     dout : out STD_LOGIC_VECTOR ( 2 downto 0 )
   );
   end component system_xlconstant_0_0;
-  component system_axis_image_buffer_12_0_0 is
-  port (
-    aclk : in STD_LOGIC;
-    aresetn : in STD_LOGIC;
-    s_axis_video_tdata : in STD_LOGIC_VECTOR ( 23 downto 0 );
-    s_axis_video_tvalid : in STD_LOGIC;
-    s_axis_video_tuser : in STD_LOGIC;
-    s_axis_video_tlast : in STD_LOGIC;
-    s_axis_video_tready : out STD_LOGIC;
-    cnn_busy : in STD_LOGIC;
-    frame_done : out STD_LOGIC;
-    cnn_read_enable : in STD_LOGIC;
-    cnn_read_addr : in STD_LOGIC_VECTOR ( 13 downto 0 );
-    cnn_read_data : out STD_LOGIC_VECTOR ( 7 downto 0 )
-  );
-  end component system_axis_image_buffer_12_0_0;
   component system_axis_broadcaster_0_0 is
   port (
     aclk : in STD_LOGIC;
@@ -3507,6 +3491,22 @@ architecture STRUCTURE of system is
     m_axis_video_tlast : out STD_LOGIC
   );
   end component system_axis_resize_128x128_0_1;
+  component system_axis_image_buffer_12_0_0 is
+  port (
+    aclk : in STD_LOGIC;
+    aresetn : in STD_LOGIC;
+    s_axis_video_tdata : in STD_LOGIC_VECTOR ( 23 downto 0 );
+    s_axis_video_tvalid : in STD_LOGIC;
+    s_axis_video_tuser : in STD_LOGIC;
+    s_axis_video_tlast : in STD_LOGIC;
+    s_axis_video_tready : out STD_LOGIC;
+    cnn_busy : in STD_LOGIC;
+    frame_done : out STD_LOGIC;
+    cnn_read_enable : in STD_LOGIC;
+    cnn_read_addr : in STD_LOGIC_VECTOR ( 13 downto 0 );
+    cnn_read_data : out STD_LOGIC_VECTOR ( 7 downto 0 )
+  );
+  end component system_axis_image_buffer_12_0_0;
   signal AXI_BayerToRGB_1_AXI_Stream_Master_TDATA : STD_LOGIC_VECTOR ( 31 downto 0 );
   signal AXI_BayerToRGB_1_AXI_Stream_Master_TLAST : STD_LOGIC;
   signal AXI_BayerToRGB_1_AXI_Stream_Master_TREADY : STD_LOGIC;
