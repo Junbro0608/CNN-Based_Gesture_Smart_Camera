@@ -1,29 +1,21 @@
 module CNN_accelerator #(
-    parameter WT_ADDR_WIDTH   = 10 * 128,
-    parameter WT_DATA_WIDTH   = 64,
-    parameter DATA_ADDR_WIDTH = 64 * 64 * 16,
-    parameter DATA_DATA_WIDTH = 8,
-    parameter IMG_ADDR_WIDH   = 128,
-    parameter IMG_DATA_WIDH   = DATA_DATA_WIDTH
+    parameter WT_DEPTH = 11187,   //절대 가중치
+    parameter MAX_LAYER_WORDS    = 8224,  //상대 가중치
+    parameter WT_DATA_WIDTH    = 64,
+    parameter DATA_ADDR_WIDTH  = 64 * 64 * 16,
+    parameter DATA_DATA_WIDTH  = 8,
+    parameter IMG_ADDR_WIDH    = 128,
+    parameter IMG_DATA_WIDH    = 8
 ) (
-    input logic clk,
-    input logic rst_n,
-    input logic start,
-    output logic done,
-    output logic busy,
-    output logic result,
+    input  logic                                                  sysclk,
+    input  logic                                                  rst_n,
+    input  logic                                                  start,
+    output logic                                                  done,
+    output logic                                                  busy,
+    output logic                                                  result,
     //push img
-    output logic [$clog2(IMG_ADDR_WIDH*IMG_ADDR_WIDH)-1:0] img_raddr,
-    input logic signed [IMG_DATA_WIDH-1:0] img_rdata,
-    //dram
-    output logic [71:0] s_axis_mms2s_cmd_tdata,  // 명령어 tdata
-    input logic s_axis_mms2s_cmd_tready,  // 명령어 tready
-    output logic s_axis_mms2s_cmd_tvalid,  // 명령어 tvalid
-    input logic signed [63:0] s_axis_mm2s_tdata,  //rdata push data
-    input  logic [ 7:0] s_axis_mm2s_tkeep,        //rdata 64비트(8바이트) 중에서 몇 번째 바이트가 유효한지*무시*
-    input logic s_axis_mm2s_tlast,  //rdata 마지막 데이터라는 신호
-    output logic s_axis_mm2s_tready,  //rdata tready
-    input logic s_axis_mm2s_tvalid  //rdata push done
+    output logic        [$clog2(IMG_ADDR_WIDH*IMG_ADDR_WIDH)-1:0] img_raddr,
+    input  logic signed [                      IMG_DATA_WIDH-1:0] img_rdata
 );
     logic                                      CONVFC_mux_sel;
 
@@ -32,8 +24,6 @@ module CNN_accelerator #(
     logic                                      conv_conv_en;
     logic                                      conv_Relu_en;
     logic                                      conv_MaxPool_en;
-    logic        [            $clog2(128)-1:0] conv_input_channel;
-    logic        [            $clog2(128)-1:0] conv_output_channel;
     logic                                      conv_Done;
 
     logic                                      fc_start;
@@ -41,16 +31,11 @@ module CNN_accelerator #(
     logic        [           $clog2(1024)-1:0] fc_input_length;
     logic        [             $clog2(64)-1:0] fc_output_length;
     logic                                      fc_Done;
-
-    logic                                      Data_mem_sel;
-    logic                                      dram_move_start;
-    logic                                      dram_move_Done;
+    logic        [                        2:0] layer;
 
     // conv/fc <-> weight buffer
-    logic        [  $clog2(WT_ADDR_WIDTH)-1:0] conv_WT_raddr;
-    logic signed [          WT_DATA_WIDTH-1:0] conv_WT_rdata;
-    logic        [  $clog2(WT_ADDR_WIDTH)-1:0] fc_WT_raddr;
-    logic signed [          WT_DATA_WIDTH-1:0] fc_WT_rdata;
+    logic        [$clog2(MAX_LAYER_WORDS)-1:0] conv_WT_raddr;
+    logic        [$clog2(MAX_LAYER_WORDS)-1:0] fc_WT_raddr;
 
     // conv/fc <-> data buffer
     logic                                      conv_DATA_we;
@@ -66,16 +51,13 @@ module CNN_accelerator #(
     logic signed [        DATA_DATA_WIDTH-1:0] fc_DATA_rdata;
 
     // padding control
-    logic        [$clog2(DATA_ADDR_WIDTH)-1:0] padding_size;
+    logic        [                        7:0] padding_size;
     logic                                      padding_en;
     logic                                      img_MUX_sel;
-    logic        [$clog2(DATA_ADDR_WIDTH)-1:0] DATA_raddr;
     logic        [$clog2(DATA_ADDR_WIDTH)-1:0] padding_DATA_raddr;
-
-    // DRAM push image path
-    logic                                      img_we;
-    logic        [$clog2(DATA_ADDR_WIDTH)-1:0] img_waddr;
-    logic signed [        DATA_DATA_WIDTH-1:0] img_wdata;
+    logic        [                        7:0] conv_tile_index;
+    logic        [                        7:0] conv_pad_row;
+    logic        [                        7:0] conv_pad_col;
 
     // write/read mux signals
     logic                                      mux_we;
@@ -86,31 +68,28 @@ module CNN_accelerator #(
     // Typo-compatibility aliases used in existing instance connections
     logic        [$clog2(DATA_ADDR_WIDTH)-1:0] mux_wAddr;
     logic signed [        DATA_DATA_WIDTH-1:0] mux_wData;
-    logic                                      DATA_w_sel;
     logic signed [        DATA_DATA_WIDTH-1:0] DATA_rData;
+    logic                                      clk;
+
+    assign clk = sysclk;
 
     assign mux_wAddr = mux_waddr;
     assign mux_wData = mux_wdata;
-    assign DATA_w_sel = Data_mem_sel;
-    assign conv_DATA_rdata = DATA_rData;
     assign fc_DATA_rdata = DATA_rData;
 
     // Weight ping-pong control path
-    logic pingpong_W_sel;
-    logic WT_we;
-    logic [$clog2(WT_ADDR_WIDTH)-1:0] WT_wAddr;
-    logic signed [WT_DATA_WIDTH-1:0] WT_wData;
-    logic [$clog2(WT_ADDR_WIDTH)-1:0] WT_rAddr;
-    logic signed [WT_DATA_WIDTH-1:0] WT_rData;
+    logic                                      pingpong_W_sel;
+    logic        [$clog2(MAX_LAYER_WORDS)-1:0] WT_rAddr;
+    logic signed [          WT_DATA_WIDTH-1:0] WT_rData;
 
     CNN_acc_controller U_CNN_acc_controller (
         .clk             (clk),
         .rst_n           (rst_n),
         //conv_ctrl
         .conv_start      (conv_start),
-        .conv_conv_en    (conv_conv_en),
-        .conv_Relu_en    (conv_Relu_en),
-        .conv_MaxPool_en (conv_MaxPool_en),
+        .conv_conv_en    (),
+        .conv_Relu_en    (),
+        .conv_MaxPool_en (),
         .cnn_Done        (conv_Done),
         //fc_ctrl
         .fc_start        (fc_start),
@@ -118,11 +97,13 @@ module CNN_accelerator #(
         .fc_input_length (fc_input_length),
         .fc_output_length(fc_output_length),
         .fc_Done         (fc_Done),
-        //weight_Move_ctrl
-        .dram_move_start (dram_move_start),
-        .dram_move_Done  (dram_move_Done),
-        //Mem_ctrl
+        //padding_ctrl
+        .padding_size    (padding_size),      // 패딩 전 사이즈: 128/64/32
         .img_MUX_sel     (img_MUX_sel),
+        .padding_en      (padding_en),
+        //weight layer select
+        .layer           (layer),
+        //Mem_ctrl
         .CONVFC_MUX_sel  (CONVFC_mux_sel),
         .pingpong_W_sel  (pingpong_W_sel),    //0 : A write 1 : B write 메모리로 선언
         //outside
@@ -133,34 +114,33 @@ module CNN_accelerator #(
 
     //-----------------------------연산---------------------------------
     conv #(
-        .WT_ADDR_WIDTH  (WT_ADDR_WIDTH),
-        .WT_DATA_WIDTH  (WT_DATA_WIDTH),
-        .DATA_ADDR_WIDTH(DATA_ADDR_WIDTH),
-        .DATA_DATA_WIDTH(DATA_DATA_WIDTH)
+        .NUM_CH                (8),
+        .NUM_LAYERS            (3),
+        .INPUT_WIDTH           (128),
+        .INPUT_HEIGHT          (128),
+        .LAYER0_OUTPUT_CHANNELS(16),
+        .LAYER1_OUTPUT_CHANNELS(32),
+        .LAYER2_OUTPUT_CHANNELS(64)
     ) U_conv (
-        .clk,
-        .rst_n,
-        //CNN ctrl
-        .start         (conv_start),
-        .Relu_en       (conv_Relu_en),
-        .MaxPool_en    (conv_MaxPool_en),
-        .input_channel (conv_input_channel),
-        .output_channel(conv_output_channel),
-        .Done          (conv_Done),
-        //weight side
-        .wt_raddr      (conv_WT_raddr),
-        .wt_rdata      (conv_WT_rdata),
-        //Data Load
-        .DATA_we       (conv_DATA_we),
-        .DATA_waddr    (conv_DATA_waddr),
-        .DATA_wdata    (conv_DATA_wdata),
-        //Data Store
-        .DATA_raddr    (conv_DATA_raddr),
-        .DATA_rdata    (conv_DATA_rdata)
+        .clk         (clk),
+        .rst_n       (rst_n),
+        .start       (conv_start),
+        .done        (conv_Done),
+        .busy        (),
+        .rAddr       (conv_DATA_raddr),
+        .rData       (conv_DATA_rdata),
+        .tile_index  (conv_tile_index),
+        .pad_row     (conv_pad_row),
+        .pad_col     (conv_pad_col),
+        .we          (conv_DATA_we),
+        .wAddr       (conv_DATA_waddr),
+        .wData       (conv_DATA_wdata),
+        .weight_addr (conv_WT_raddr),
+        .weight_rdata(WT_rData)
     );
 
     fc #(
-        .WT_ADDR_WIDTH  (WT_ADDR_WIDTH),
+        .WT_ADDR_WIDTH  (MAX_LAYER_WORDS),
         .WT_DATA_WIDTH  (WT_DATA_WIDTH),
         .DATA_ADDR_WIDTH(DATA_ADDR_WIDTH),
         .DATA_DATA_WIDTH(DATA_DATA_WIDTH)
@@ -169,12 +149,14 @@ module CNN_accelerator #(
         .rst_n        (rst_n),
         //CNN ctrl
         .start        (fc_start),
+        .layer        (layer),
+        .finish_en    (fc_finish_en),
         .input_length (fc_input_length),
         .output_length(fc_output_length),
         .Done         (fc_Done),
         //weight side
         .wt_raddr     (fc_WT_raddr),
-        .wt_rdata     (fc_WT_rdata),
+        .wt_rdata     (WT_rData),
         //Data Load
         .DATA_we      (fc_DATA_we),
         .DATA_waddr   (fc_DATA_waddr),
@@ -200,15 +182,18 @@ module CNN_accelerator #(
     padding #(
         .DATA_ADDR_WIDTH(DATA_ADDR_WIDTH),
         .DATA_DATA_WIDTH(DATA_DATA_WIDTH),
-        .IMG_ADDR_WIDH  (128),
-        .IMG_DATA_WIDH  (DATA_DATA_WIDTH)
+        .IMG_ADDR_WIDH(128),
+        .IMG_DATA_WIDH(IMG_DATA_WIDH),
+        .TILE_INDEX_WIDTH(8)
     ) U_padding (
-        .padding_size(padding_size),  // 패딩 전 사이즈: 128/64/32
+        .padding_size(padding_size),        // 패딩 전 사이즈: 128/64/32
         .img_MUX_sel (img_MUX_sel),
         .padding_en  (padding_en),
-        //conv io
-        .conv_raddr  (conv_DATA_raddr),  // conv read addr
-        .conv_rdata  (conv_DATA_rdata),  // conv read data
+        //conv 좌표 io
+        .tile_index  (conv_tile_index),
+        .pad_row     (conv_pad_row),
+        .pad_col     (conv_pad_col),
+        .conv_rdata  (conv_DATA_rdata),     // conv read data
         //data_mem
         .data_raddr  (padding_DATA_raddr),
         .data_rdata  (DATA_rData),
@@ -227,7 +212,7 @@ module CNN_accelerator #(
         .out(mux_raddr)
     );
 
-    //Data(254,016 bytes)
+    //Data
     pingpongBuffer #(
         .ADDR_WIDTH(DATA_ADDR_WIDTH),
         .DATA_WIDTH(DATA_DATA_WIDTH)
@@ -247,41 +232,21 @@ module CNN_accelerator #(
 
     //-----------------------------weigth----------------------
     mux2 #(
-        .WIDTH($clog2(WT_ADDR_WIDTH) + WT_DATA_WIDTH)
+        .WIDTH($clog2(MAX_LAYER_WORDS))
     ) U_weigth_raddr_MUX (
-        .in0({conv_WT_raddr, conv_WT_rdata}),
-        .in1({fc_WT_raddr, fc_WT_rdata}),
+        .in0(conv_WT_raddr),
+        .in1(fc_WT_raddr),
         .sel(CONVFC_mux_sel),
-        .out({WT_rAddr, WT_rData})
+        .out(WT_rAddr)
     );
 
-    dram_controller u_dram_controller (
-        .clk              (clk),
-        .rst_n            (rst_n),
-        .start_req        (dram_move_start),
-        .sys_addr         (32'h1000_0000),
-        .sys_btt          (23'd8),
-        .m_axis_cmd_tdata (s_axis_mms2s_cmd_tdata),
-        .m_axis_cmd_tvalid(s_axis_mms2s_cmd_tvalid),
-        .m_axis_cmd_tready(s_axis_mms2s_cmd_tready)
-    );
-
-    assign dram_move_Done = s_axis_mm2s_tlast & s_axis_mm2s_tvalid & s_axis_mm2s_tready;
-
-    //Weigth(20,480 bytes)
-    pingpongBuffer #(
-        .ADDR_WIDTH(WT_ADDR_WIDTH),
-        .DATA_WIDTH(WT_DATA_WIDTH)
-    ) U_wight_Buffer (
-        //buffer ctrl
-        .w_sel(pingpong_W_sel),
-        //write
-        .wclk (clk),
-        .we   (WT_we),
-        .wAddr(WT_wAddr),
-        .wData(WT_wData),
-        //read
+    weight_mem #(
+        .WT_DEPTH       (WT_DEPTH),
+        .MAX_LAYER_WORDS(MAX_LAYER_WORDS),
+        .DATA_WIDTH     (WT_DATA_WIDTH)
+    ) U_weight_mem (
         .rclk (clk),
+        .layer(layer),
         .rAddr(WT_rAddr),
         .rData(WT_rData)
     );

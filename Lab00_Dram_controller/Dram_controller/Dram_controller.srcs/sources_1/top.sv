@@ -36,6 +36,7 @@ module top (
         .start(start),
         .done(done),
         .busy(busy),
+        .result(),
         //Dram
         .s_axis_mms2s_cmd_tdata (s_axis_mms2s_cmd_tdata),
         .s_axis_mms2s_cmd_tready(s_axis_mms2s_cmd_tready),
@@ -52,7 +53,24 @@ module top (
         .s_axis_mm2s_tvalid(s_axis_mm2s_tvalid)  //rdata push done
     );
 
-
+    input logic clk,
+    input logic rst_n,
+    input logic start,
+    output logic done,
+    output logic busy,
+    output logic result,
+    //push img
+    output logic [$clog2(IMG_ADDR_WIDH*IMG_ADDR_WIDH)-1:0] img_raddr,
+    input logic signed [IMG_DATA_WIDH-1:0] img_rdata,
+    //dram
+    output logic [71:0] s_axis_mms2s_cmd_tdata,  // 명령어 tdata
+    input logic s_axis_mms2s_cmd_tready,  // 명령어 tready
+    output logic s_axis_mms2s_cmd_tvalid,  // 명령어 tvalid
+    input logic signed [63:0] s_axis_mm2s_tdata,  //rdata push data
+    input  logic [ 7:0] s_axis_mm2s_tkeep,        //rdata 64비트(8바이트) 중에서 몇 번째 바이트가 유효한지*무시*
+    input logic s_axis_mm2s_tlast,  //rdata 마지막 데이터라는 신호
+    output logic s_axis_mm2s_tready,  //rdata tready
+    input logic s_axis_mm2s_tvalid  //rdata push done
 
 
 
