@@ -58,11 +58,12 @@ module CNN #(
     output logic [DATA_ADDR_WIDTH-1:0]   wAddr,
     output logic signed [BUFFER_DATA_WIDTH-1:0] wData,
 
-    // External asynchronous-read 64-bit Weight Ping-Pong Buffer.
-    // weight_addr is a 64-bit word address, not a byte address.
-    output logic                         weight_ren,
-    output logic [WEIGHT_ADDR_WIDTH-1:0] weight_addr,
-    input  logic [NUM_CH*8-1:0]          weight_rdata
+    // External asynchronous-read weight buffer. weight_data and bias_data
+    // follow weight_addr combinationally and are captured when weight_ren=1.
+    output logic                           weight_ren,
+    output logic [WEIGHT_ADDR_WIDTH-1:0]   weight_addr,
+    input  logic signed [7:0] weight_data [0:NUM_CH-1][0:8],
+    input  logic signed [31:0] bias_data  [0:NUM_CH-1]
 );
 
     // Physical padded input of Conv Layer 1.
@@ -103,6 +104,9 @@ module CNN #(
     localparam integer CH_SELECT_WIDTH =
         (NUM_CH <= 1) ? 1 : $clog2(NUM_CH);
     localparam integer CONFIG_WIDTH = 16;
+    // Nine signed 8-bit weights and one signed 32-bit bias per channel.
+    localparam integer WEIGHT_PACKET_BYTES = 13 * NUM_CH;
+
     typedef enum logic [3:0] {
         CNN_IDLE,
         START_GROUP,
@@ -167,11 +171,11 @@ module CNN #(
     logic cfg_MaxPool_en;
     logic cfg_Relu_en;
     logic [WEIGHT_ADDR_WIDTH-1:0] cfg_layer_weight_base;
-    logic [DATA_ADDR_WIDTH-1:0] cfg_group_weight_base;
+    logic [WEIGHT_ADDR_WIDTH-1:0] cfg_group_weight_base;
 
     // Conv_Controller ↔ external Weight Buffer register bridge.
     logic controller_weight_load_start;
-    logic [DATA_ADDR_WIDTH-1:0] controller_weight_load_addr;
+    logic [WEIGHT_ADDR_WIDTH-1:0] controller_weight_load_addr;
     logic weight_load_ready;
     logic weight_valid;
     logic signed [7:0] weight_reg [0:NUM_CH-1][0:8];
@@ -220,6 +224,9 @@ module CNN #(
     logic [CONFIG_WIDTH-1:0] current_input_channel;
     logic [CONFIG_WIDTH-1:0] current_pool_x;
     logic [CONFIG_WIDTH-1:0] current_pool_y;
+    integer reg_ch;
+    integer reg_kernel;
+
     initial begin
         if ((NUM_CH <= 0)
             || (BUFFER_DATA_WIDTH < 8)
@@ -255,6 +262,11 @@ module CNN #(
     assign data_read_fire =
         controller_data_read_enable && data_read_ready;
     assign conv_rAddr = controller_data_read_addr;
+
+    assign weight_load_ready = 1'b1;
+    assign weight_ren  =
+        controller_weight_load_start && weight_load_ready;
+    assign weight_addr = controller_weight_load_addr;
 
     assign conv_we    = controller_data_write_enable;
     assign conv_w_sel = controller_data_write_bank;
@@ -313,9 +325,10 @@ module CNN #(
             end
         endcase
 
-        // Conv_Controller's legacy address output is no longer used. The
-        // Weight_Loader calculates word addresses from group/channel indices.
-        cfg_group_weight_base = '0;
+        cfg_group_weight_base =
+            cfg_layer_weight_base
+            + output_group_index
+                * (cfg_input_channels * WEIGHT_PACKET_BYTES);
     end
 
     // Pool4 and Pool5 reuse one standalone engine. Layer 3 writes its compact
@@ -457,31 +470,6 @@ module CNN #(
             endcase
         end
     end
-
-    // Reads nine 64-bit Weight words and the layer-end Bias word from the
-    // external buffer. Conv_Controller waits for weight_valid before it
-    // starts requesting feature-map pixels.
-    Weight_Loader #(
-        .NUM_CH      (NUM_CH),
-        .ADDR_WIDTH  (WEIGHT_ADDR_WIDTH),
-        .CONFIG_WIDTH(CONFIG_WIDTH)
-    ) U_WEIGHT_LOADER (
-        .clk                (clk),
-        .rst_n              (rst_n),
-        .load_start         (controller_weight_load_start),
-        .load_ready         (weight_load_ready),
-        .busy               (),
-        .weight_valid       (weight_valid),
-        .input_channels     (cfg_input_channels),
-        .output_groups      (cfg_output_groups),
-        .output_group_index (output_group_index),
-        .input_channel_index(current_input_channel),
-        .wt_ren             (weight_ren),
-        .wt_raddr           (weight_addr),
-        .wt_rdata           (weight_rdata),
-        .weight_out         (weight_reg),
-        .bias_out           (bias_reg)
-    );
 
     Conv_Controller #(
         .NUM_CH      (NUM_CH),
@@ -655,6 +643,35 @@ module CNN #(
             if (data_read_fire) begin
                 data_reg       <= conv_rData[7:0];
                 data_reg_valid <= 1'b1;
+            end
+        end
+    end
+
+    // Capture one complete asynchronous weight-buffer output in CNN-local
+    // registers. weight_valid remains asserted until the next request.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            weight_valid     <= 1'b0;
+
+            for (reg_ch = 0; reg_ch < NUM_CH; reg_ch = reg_ch + 1) begin
+                bias_reg[reg_ch] <= 32'sd0;
+                for (reg_kernel = 0; reg_kernel < 9;
+                     reg_kernel = reg_kernel + 1) begin
+                    weight_reg[reg_ch][reg_kernel] <= 8'sd0;
+                end
+            end
+        end else begin
+            if (weight_ren) begin
+                for (reg_ch = 0; reg_ch < NUM_CH; reg_ch = reg_ch + 1) begin
+                    bias_reg[reg_ch] <= bias_data[reg_ch];
+                    for (reg_kernel = 0; reg_kernel < 9;
+                         reg_kernel = reg_kernel + 1) begin
+                        weight_reg[reg_ch][reg_kernel]
+                            <= weight_data[reg_ch][reg_kernel];
+                    end
+                end
+
+                weight_valid <= 1'b1;
             end
         end
     end
