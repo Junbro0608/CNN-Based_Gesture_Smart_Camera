@@ -30,12 +30,8 @@ def list_image_files(folder: Path):
 
 def preprocess_to_int8(image_path: Path):
 	img = Image.open(image_path).convert("L").resize(IMAGE_SIZE, Image.Resampling.BILINEAR)
-	arr = np.asarray(img, dtype=np.float32) / 255.0
-
-	# Same normalization used in training: (x - 0.5) / 0.5 => [-1, 1]
-	norm = (arr - 0.5) / 0.5
-	int8_arr = np.clip(np.round(norm * 127.0), -128, 127).astype(np.int8)
-	return int8_arr
+	arr = np.asarray(img, dtype=np.uint8)
+	return (arr.astype(np.int16) - 128).astype(np.int8)
 
 
 def write_mem_file(path: Path, int8_arr: np.ndarray):

@@ -16,6 +16,7 @@ module CH #(
     input  logic              pixel_valid,
     output logic              pixel_ready,
     input  logic        [1:0] window_index,
+    input  logic              zero_extend_input,
     input  logic signed [7:0] pixel_in    [0:8],
 
     // Weight Buffer → CH
@@ -103,9 +104,11 @@ module CH #(
         conv_sum = 32'sd0;
 
         for (i = 0; i < 9; i = i + 1) begin
-            // signed 8-bit Pixel의 부호 Bit를 복사하여
-            // signed 9-bit로 부호 확장
-            pixel_signed[i] = $signed({pixel_in[i][7], pixel_in[i]});
+            // All feature and image inputs use signed int8 two's-complement
+            // values. zero_extend_input remains for interface compatibility.
+            pixel_signed[i] = zero_extend_input
+                ? {1'b0, pixel_in[i]}
+                : $signed({pixel_in[i][7], pixel_in[i]});
 
             // signed 8-bit Weight의 부호 Bit를 복사하여
             // signed 9-bit로 부호 확장

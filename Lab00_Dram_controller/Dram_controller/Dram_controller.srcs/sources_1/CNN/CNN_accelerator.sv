@@ -1,5 +1,5 @@
 module CNN_accelerator #(
-    parameter WT_DEPTH = 11187,   //절대 가중치
+    parameter WT_DEPTH = 11243,   //절대 가중치
     parameter MAX_LAYER_WORDS    = 8224,  //상대 가중치
     parameter WT_DATA_WIDTH    = 64,
     parameter DATA_ADDR_WIDTH  = 64 * 64 * 16,
@@ -15,7 +15,7 @@ module CNN_accelerator #(
     output logic                                                  result,
     //push img
     output logic        [$clog2(IMG_ADDR_WIDH*IMG_ADDR_WIDH)-1:0] img_raddr,
-    input  logic signed [                      IMG_DATA_WIDH-1:0] img_rdata
+    input  logic signed [               IMG_DATA_WIDH-1:0] img_rdata
 );
     logic                                      CONVFC_mux_sel;
 
@@ -152,7 +152,7 @@ module CNN_accelerator #(
         .layer        (layer),
         .finish_en    (fc_finish_en),
         .input_length (fc_input_length),
-        .output_length(fc_output_length),
+        .output_length({4'd0, fc_output_length}),
         .Done         (fc_Done),
         //weight side
         .wt_raddr     (fc_WT_raddr),
@@ -189,6 +189,8 @@ module CNN_accelerator #(
         .padding_size(padding_size),        // 패딩 전 사이즈: 128/64/32
         .img_MUX_sel (img_MUX_sel),
         .padding_en  (padding_en),
+        .direct_raddr_en(!padding_en && !CONVFC_mux_sel),
+        .direct_raddr(conv_DATA_raddr),
         //conv 좌표 io
         .tile_index  (conv_tile_index),
         .pad_row     (conv_pad_row),

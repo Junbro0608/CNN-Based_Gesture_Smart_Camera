@@ -13,8 +13,6 @@ module fc_controller #(
     input logic [$clog2(MAX_OUTPUT_LENGTH)-1:0] output_length,
     input logic finish_en,
 
-    input logic quant_result_valid,
-
     output logic start_accept,
     output logic busy,
     output logic Done,
@@ -33,7 +31,6 @@ module fc_controller #(
 
     output logic output_capture_en,
     output logic [2:0] output_read_lane_index,
-    output logic quant_input_valid,
 
     output logic result_capture_en
 );
@@ -59,7 +56,6 @@ module fc_controller #(
         S_CAPTURE,
         S_BIAS_ADD,
         S_QUANT_ISSUE,
-        S_QUANT_WAIT,
         S_NEXT_GROUP,
         S_FINAL_RESULT,
         S_DONE
@@ -151,11 +147,10 @@ module fc_controller #(
                         end
                     end
 
-                    S_QUANT_WAIT: begin
-                        if (quant_result_valid &&
-                            (current_output_index_extended !=
-                             latched_output_length_extended) &&
-                            (quant_lane_index != 3'd7)) begin
+                    S_QUANT_ISSUE: begin
+                        if ((current_output_index_extended !=
+                             latched_output_length_extended)
+                            && (quant_lane_index != 3'd7)) begin
                             quant_lane_index <= quant_lane_index + 3'd1;
                         end
                     end
@@ -192,7 +187,6 @@ module fc_controller #(
         lane_valid = 8'b00000000;
         output_capture_en = 1'b0;
         output_read_lane_index = 3'd0;
-        quant_input_valid = 1'b0;
         result_capture_en = 1'b0;
 
         // 각 lane의 전체 output index를 넓은 폭에서 직접 비교한다.
@@ -267,35 +261,25 @@ module fc_controller #(
 
             S_QUANT_ISSUE: begin
                 output_read_lane_index = quant_lane_index;
+                core_data_write_offset =
+                    current_output_index_extended[DATA_ADDR_BITS-1:0];
 
                 if (lane_valid[quant_lane_index]) begin
-                    // 유효 lane 하나만 shared quantizer에 요청한다.
-                    quant_input_valid = 1'b1;
-                    next_state        = S_QUANT_WAIT;
-                end else begin
-                    // 유효 lane은 낮은 번호부터 연속이므로 정상 경로에는 도달하지 않는다.
-                    next_state = S_DONE;
-                end
-            end
-
-            S_QUANT_WAIT: begin
-                output_read_lane_index = quant_lane_index;
-
-                // 확장 산술 결과의 유효 주소 부분만 명시적으로 선택한다.
-                core_data_write_offset = current_output_index_extended[DATA_ADDR_BITS-1:0];
-
-                if (quant_result_valid) begin
+                    // requantize is combinational, so write the selected lane
+                    // directly without a request/response handshake.
                     core_data_write_en = 1'b1;
 
                     if (current_output_index_extended ==
                         latched_output_length_extended) begin
-                        // 마지막 output write edge 다음 S_DONE cycle에 Done을 낸다.
                         next_state = S_DONE;
                     end else if (quant_lane_index == 3'd7) begin
                         next_state = S_NEXT_GROUP;
                     end else begin
                         next_state = S_QUANT_ISSUE;
                     end
+                end else begin
+                    // 유효 lane은 낮은 번호부터 연속이므로 정상 경로에는 도달하지 않는다.
+                    next_state = S_DONE;
                 end
             end
 
@@ -313,6 +297,9 @@ module fc_controller #(
             S_DONE: begin
                 lane_valid = 8'b00000000;
                 Done       = 1'b1;
+                if (latched_finish_en) begin
+                    result_capture_en = 1'b1;
+                end
                 next_state = S_IDLE;
             end
 

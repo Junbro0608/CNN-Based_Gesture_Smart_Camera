@@ -202,6 +202,7 @@ module conv #(
     logic [1:0] shift_window_index;
     logic shift_tile_done;
     logic ch_consumed_tile_done;
+    logic zero_extend_input;
 
     // CH and MaxPool path.
     logic [NUM_CH-1:0] ch_enable;
@@ -638,6 +639,7 @@ module conv #(
         .pixel_valid (shift_window_valid),
         .pixel_ready (ch_pixel_ready),
         .window_index(shift_window_index),
+        .zero_extend_input(zero_extend_input),
         .pixel_in    (pixel_window),
         .weight_valid(weight_valid),
         .weight_in   (weight_reg),
@@ -670,6 +672,7 @@ module conv #(
 
     assign shift_window_ready   = ch_pixel_ready;
     assign ch_wdata             = result_output_data;
+    assign zero_extend_input    = 1'b0;
 
     // Capture the asynchronous external Data Buffer output in a CNN-local
     // register. A new value may replace the current value on the same clock

@@ -108,7 +108,8 @@ module CNN_acc_controller #(
         //이미지 데이터 사용 MUX 스위칭
         if (state == CONV_1) img_MUX_sel = 1;  // img 사용
         else img_MUX_sel = 0;  //내부 메모리 사용
-        if (state == CONV_1 || state == CONV_2 || state == CONV_3) padding_en = 1;
+        if (state == CONV_1 || state == CONV_2 || state == CONV_3)
+            padding_en = 1;
         else padding_en = 0;
 
         case (state)
@@ -127,8 +128,9 @@ module CNN_acc_controller #(
                 end
             end
             CONV_1: begin
-                layer        = 1;
-                padding_size = 128;
+                pingpong_W_sel = 0;
+                layer          = 1;
+                padding_size   = 128;
                 if (cnn_Done_reg_d) begin
                     next_state                                    = CONV_2;
                     padding_size                                  = 64;
@@ -136,12 +138,13 @@ module CNN_acc_controller #(
                     pingpong_W_sel                                = 1;
                     cnn_Done_clr                                  = 1;
                     {conv_conv_en, conv_Relu_en, conv_MaxPool_en} = 3'b111;
-                    layer        = 2;
+                    layer                                         = 2;
                 end
             end
             CONV_2: begin
-                layer        = 2;
-                padding_size = 64;
+                pingpong_W_sel = 1;
+                layer          = 2;
+                padding_size   = 64;
                 if (cnn_Done_reg_d) begin
                     padding_size                                  = 32;
                     next_state                                    = CONV_3;
@@ -149,23 +152,25 @@ module CNN_acc_controller #(
                     pingpong_W_sel                                = 0;
                     cnn_Done_clr                                  = 1;
                     {conv_conv_en, conv_Relu_en, conv_MaxPool_en} = 3'b111;
-                    layer        = 3;
+                    layer                                         = 3;
                 end
             end
             CONV_3: begin
-                layer        = 3;
-                padding_size = 32;
+                pingpong_W_sel = 0;
+                layer          = 3;
+                padding_size   = 32;
                 if (cnn_Done_reg_d) begin
                     next_state                                    = MAXPOOL_1;
                     conv_start                                    = 1;
                     pingpong_W_sel                                = 1;
                     {conv_conv_en, conv_Relu_en, conv_MaxPool_en} = 3'b001;
                     cnn_Done_clr                                  = 1;
-                    layer        = 0;
+                    layer                                         = 0;
                 end
             end
             MAXPOOL_1: begin
-                layer        = 0;
+                pingpong_W_sel  = 1;
+                layer           = 0;
                 conv_MaxPool_en = 1;
                 if (cnn_Done_reg_d) begin
                     next_state                                    = MAXPOOL_2;
@@ -173,11 +178,12 @@ module CNN_acc_controller #(
                     pingpong_W_sel                                = 0;
                     {conv_conv_en, conv_Relu_en, conv_MaxPool_en} = 3'b001;
                     cnn_Done_clr                                  = 1;
-                    layer        = 0;
+                    layer                                         = 0;
                 end
             end
             MAXPOOL_2: begin
-                layer        = 0;
+                pingpong_W_sel = 0;
+                layer          = 0;
                 if (cnn_Done_reg_d) begin
                     next_state       = FC_1;
                     fc_start         = 1;
@@ -186,14 +192,14 @@ module CNN_acc_controller #(
                     cnn_Done_clr     = 1;
                     fc_input_length  = 1023;
                     fc_output_length = 63;
-                    layer        = 4;
+                    layer            = 4;
                 end
             end
             FC_1: begin
                 layer = 4;
                 // FC_1은 MAXPOOL_2 결과가 있는 read bank를 유지해야 한다.
-                pingpong_W_sel   = 1;
-                fc_input_length  = 1023;
+                pingpong_W_sel = 1;
+                fc_input_length = 1023;
                 fc_output_length = 63;
                 if (fc_Done_reg_d) begin
                     next_state       = FC_2;
@@ -204,11 +210,12 @@ module CNN_acc_controller #(
                     fc_input_length  = 63;
                     fc_output_length = 0;
                     fc_finish_en     = 1;
-                    layer        = 5;
+                    layer            = 5;
                 end
             end
             FC_2: begin
-                layer = 5;
+                pingpong_W_sel   = 0;
+                layer            = 5;
                 // FC_2는 FC_1 출력 bank를 읽도록 유지한다.
                 pingpong_W_sel   = 0;
                 fc_input_length  = 63;

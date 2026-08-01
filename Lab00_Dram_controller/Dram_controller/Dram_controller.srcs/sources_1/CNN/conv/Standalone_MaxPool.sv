@@ -3,8 +3,8 @@
 // Standalone signed 2x2 max-pooling engine.
 //
 // This engine is used for Pool4 and Pool5, where no convolution precedes
-// MaxPool. It reads four pixels directly from the external asynchronous-read
-// ping-pong buffer and writes one pooled result on a clock edge.
+// MaxPool. It reads four pixels from the external synchronous-read ping-pong
+// buffer and writes one pooled result on a clock edge.
 //
 // Feature maps use channel-major address mapping:
 //   channel * (width * height) + y * width + x
@@ -28,7 +28,7 @@ module Standalone_MaxPool #(
     output logic                    busy,
     output logic                    done,
 
-    // External asynchronous-read, synchronous-write ping-pong buffer.
+    // External synchronous-read, synchronous-write ping-pong buffer.
     output logic [ADDR_WIDTH-1:0]          rAddr,
     input  logic signed [DATA_WIDTH-1:0]  rData,
     output logic                           we,
@@ -37,9 +37,10 @@ module Standalone_MaxPool #(
     output logic signed [DATA_WIDTH-1:0]  wData
 );
 
-    typedef enum logic [1:0] {
+    typedef enum logic [2:0] {
         IDLE,
-        READ_PIXELS,
+        ISSUE_READ,
+        CAPTURE_READ,
         WRITE_RESULT,
         DONE
     } state_t;
@@ -87,7 +88,9 @@ module Standalone_MaxPool #(
         wData = max_reg;
         we    = (state == WRITE_RESULT);
 
-        busy = (state == READ_PIXELS) || (state == WRITE_RESULT);
+        busy = (state == ISSUE_READ)
+            || (state == CAPTURE_READ)
+            || (state == WRITE_RESULT);
         done = (state == DONE);
     end
 
@@ -127,11 +130,19 @@ module Standalone_MaxPool #(
                             || (channel_count == 0))
                             state <= DONE;
                         else
-                            state <= READ_PIXELS;
+                            state <= ISSUE_READ;
                     end
                 end
 
-                READ_PIXELS: begin
+                ISSUE_READ: begin
+                    // Hold rAddr for one cycle so the synchronous RAM can
+                    // register the requested pixel into rData.
+                    state <= CAPTURE_READ;
+                end
+
+                CAPTURE_READ: begin
+                    // rData now corresponds to the address issued in the
+                    // preceding ISSUE_READ cycle.
                     if (pixel_index == 2'd0) begin
                         max_reg <= rData;
                     end else if ($signed(rData) > $signed(max_reg)) begin
@@ -143,6 +154,7 @@ module Standalone_MaxPool #(
                         state       <= WRITE_RESULT;
                     end else begin
                         pixel_index <= pixel_index + 1'b1;
+                        state       <= ISSUE_READ;
                     end
                 end
 
@@ -166,8 +178,7 @@ module Standalone_MaxPool #(
                         end else begin
                             output_x_reg <= output_x_reg + 1'b1;
                         end
-
-                        state <= READ_PIXELS;
+                        state <= ISSUE_READ;
                     end
                 end
 

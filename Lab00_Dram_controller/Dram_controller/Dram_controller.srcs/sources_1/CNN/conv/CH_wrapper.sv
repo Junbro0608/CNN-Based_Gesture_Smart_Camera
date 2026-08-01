@@ -17,6 +17,7 @@ module CH_wrapper #(
     input  logic       pixel_valid,
     output logic       pixel_ready,
     input  logic [1:0] window_index,
+    input  logic       zero_extend_input,
     input  logic signed [7:0] pixel_in [0:8],
 
     // One 3x3 kernel and one bias for each CH.
@@ -91,6 +92,7 @@ module CH_wrapper #(
                 .pixel_valid (stage_pixel_valid),
                 .pixel_ready (channel_pixel_ready[ch]),
                 .window_index(stage_window_index),
+                .zero_extend_input(zero_extend_input),
                 .pixel_in    (stage_pixel_in),
 
                 .weight_valid(weight_valid),

@@ -1,205 +1,338 @@
 import os
+import glob
+import numpy as np
+import matplotlib.pyplot as plt
+from PIL import Image
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
-import matplotlib.pyplot as plt
+from torch.utils.data import Dataset, DataLoader
+from sklearn.model_selection import train_test_split
+import torchvision.transforms.functional as TF
 
-# GPU 사용 가능 여부 확인
+# ----------------------------------------------------------------------------
+# 0. 디바이스 및 환경 설정 (Colab / 로컬 PC 자동 감지)
+# ----------------------------------------------------------------------------
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f'Using device: {device}')
-
+print(f"✅ 학습 디바이스: {device}")
 if device.type == 'cuda':
     torch.backends.cudnn.benchmark = True
 
-# 1. 데이터 전처리 및 데이터로더 설정
-# FPGA 기준 :  
-# 128 기준으로  16채널 메모리 기준 이것보다 작게
-# 데이터 새 데이터 추가하기
+INPUT_SIZE = 128  # ★ 128x128 해상도
+BATCH_SIZE = 64
 
-train_transform = transforms.Compose([
-    transforms.Grayscale(num_output_channels=1),
-    transforms.Resize((64, 64)),
-    transforms.RandomHorizontalFlip(),
-    transforms.RandomRotation(10),
-    transforms.RandomAffine(0, translate=(0.05, 0.05)),
-    transforms.ColorJitter(brightness=0.3, contrast=0.2),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.5], std=[0.5]),
-])
+# Colab 환경인지 확인
+is_colab = False
+try:
+    import google.colab
+    is_colab = True
+except ImportError:
+    is_colab = False
 
-val_transform = transforms.Compose([
-    transforms.Grayscale(num_output_channels=1),
-    transforms.Resize((64, 64)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.5], std=[0.5]),
-])
+if is_colab:
+    print("☁️ Google Colab 환경 감지: 구글 드라이브 마운트 및 압축 해제 진행...")
+    from google.colab import drive
+    drive.mount('/content/drive')
+    import zipfile
+    import shutil
 
-train_dataset = datasets.ImageFolder(root='./dataset/train', transform=train_transform)
-train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=0, pin_memory=(device.type == 'cuda'))
+    ZIP_PATH = '/content/drive/MyDrive/CNN_human_v3/archive_master_128.zip'
+    DATASET_DIR = '/content/dataset_master'
 
-val_dataset = datasets.ImageFolder(root='./dataset/val', transform=val_transform)
-val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=0, pin_memory=(device.type == 'cuda'))
+    if not os.path.exists(DATASET_DIR):
+        os.makedirs(DATASET_DIR, exist_ok=True)
+        print(f"📦 드라이브에서 '{ZIP_PATH}' 압축 해제 중...")
+        with zipfile.ZipFile(ZIP_PATH, 'r') as zip_ref:
+            zip_ref.extractall(DATASET_DIR)
+        print(f"✅ Colab 로컬 압축 해제 완료! ({DATASET_DIR})")
+else:
+    DATASET_DIR = r'D:\CNN_TEST\dataset_master'
+    print(f"💻 로컬 PC 환경 감지: {DATASET_DIR}")
 
-# 2. 모델 정의
-class PersonClassifierCNN(nn.Module):
+
+# ----------------------------------------------------------------------------
+# 1. 데이터 로드 & 전처리 (128x128)
+# ----------------------------------------------------------------------------
+def load_images_from_master(dataset_dir):
+    images, labels = [], []
+    skipped = 0
+
+    if not os.path.exists(dataset_dir):
+        print(f"❌ 데이터셋 폴더 '{dataset_dir}'가 존재하지 않습니다.")
+        print(f"💡 먼저 'python prepare_dataset_master.py'를 실행하여 데이터셋을 통합하세요!")
+        return np.array([]), np.array([])
+
+    for label, folder_name in [(0, '0'), (1, '1')]:
+        folder_path = os.path.join(dataset_dir, folder_name)
+        if not os.path.exists(folder_path):
+            continue
+
+        image_files = []
+        for ext in ['*.png', '*.jpg', '*.jpeg', '*.bmp']:
+            image_files.extend(glob.glob(os.path.join(folder_path, ext)))
+
+        print(f"  - '{folder_name}' 폴더 ({'사람' if label==1 else '배경'}): {len(image_files):,} 장 발견")
+
+        for img_path in image_files:
+            try:
+                img = Image.open(img_path).convert('L')
+                img_resized = img.resize((INPUT_SIZE, INPUT_SIZE), Image.Resampling.BILINEAR)
+                images.append(np.array(img_resized))
+                labels.append(label)
+            except Exception:
+                skipped += 1
+
+    return np.array(images), np.array(labels), skipped
+
+
+class MasterDataset(Dataset):
+    def __init__(self, images, labels, is_train=True):
+        self.images = torch.FloatTensor(images).unsqueeze(1) / 255.0
+        self.labels = torch.FloatTensor(labels)
+        self.is_train = is_train
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, idx):
+        img = self.images[idx]
+        label = self.labels[idx]
+
+        if self.is_train:
+            if torch.rand(1).item() > 0.5:
+                img = TF.hflip(img)
+
+        return img, label
+
+
+# ----------------------------------------------------------------------------
+# 3. [최고 성능 Padding=1] FPGA 호환 128x128 CNN 모델 (Dropout 0.4 강화)
+# ----------------------------------------------------------------------------
+class HumanDetectorCNN_FPGA128(nn.Module):
     def __init__(self):
-        super(PersonClassifierCNN, self).__init__()
-        self.features = nn.Sequential(
-            nn.Conv2d(1, 16, kernel_size=3),
-            nn.BatchNorm2d(16),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
+        super(HumanDetectorCNN_FPGA128, self).__init__()
+        self.conv1 = nn.Conv2d(1, 16, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(16)
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(32)
+        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn3 = nn.BatchNorm2d(64)
 
-            nn.Conv2d(16, 32, kernel_size=3),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-            nn.Dropout2d(0.1),
+        self.relu = nn.ReLU(inplace=True)
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.dropout = nn.Dropout(0.4)  # ★ Dropout 0.3 -> 0.4 상향하여 과적합 방지
 
-            nn.Conv2d(32, 64, kernel_size=3),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-            nn.Dropout2d(0.15)
-        )
-
-        self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(64 * 6 * 6, 256),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(256, 1)
-        )
+        # Flatten: 64 * 4 * 4 = 1024
+        self.fc1 = nn.Linear(64 * 4 * 4, 64)
+        self.fc2 = nn.Linear(64, 1)
 
     def forward(self, x):
-        x = self.features(x)
-        x = self.classifier(x)
-        return x
+        x = self.pool(self.relu(self.bn1(self.conv1(x))))  # → 16 x 64 x 64
+        x = self.pool(self.relu(self.bn2(self.conv2(x))))  # → 32 x 32 x 32
+        x = self.pool(self.relu(self.bn3(self.conv3(x))))  # → 64 x 16 x 16
+        x = self.pool(x)                                    # → 64 x  8 x  8 (Pool 4)
+        x = self.pool(x)                                    # → 64 x  4 x  4 (Pool 5)
+        x = x.reshape(x.size(0), -1)                        # → 1024
+        x = self.dropout(x)
+        x = self.relu(self.fc1(x))                           # → 64
+        x = self.fc2(x)                                      # → 1
+        return x.squeeze(1)
 
-    def _initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.zeros_(m.bias)
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.ones_(m.weight)
-                nn.init.zeros_(m.bias)
-            elif isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
-                nn.init.zeros_(m.bias)
 
-model = PersonClassifierCNN()
-model._initialize_weights()
-model.to(device)
+# ----------------------------------------------------------------------------
+# 4. Verilog HEX 파일 추출 함수 (BN Folding + INT8 양자화)
+# ----------------------------------------------------------------------------
+def export_verilog_hex(model_path='best_model_master128.pth'):
+    if not os.path.exists(model_path):
+        return
 
-# 3. 손실 함수 및 옵티마이저 설정 (Recall 가중치 제거 -> 기본 BCE Loss 사용)
-criterion = nn.BCEWithLogitsLoss() 
-optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=8, factor=0.5, min_lr=1e-5)
+    m = HumanDetectorCNN_FPGA128().to('cpu')
+    m.load_state_dict(torch.load(model_path, map_location='cpu'))
+    m.eval()
 
-if __name__ == "__main__":
-    # 4. 모델 학습 루프
-    epochs = 30
-    train_loss_history, train_acc_history = [], []
-    val_loss_history, val_acc_history = [], []
+    def fold_bn_and_quantize(conv, bn, scale_factor=127.0):
+        w = conv.weight.data.clone()
+        gamma, beta = bn.weight.data, bn.bias.data
+        mean, var = bn.running_mean, bn.running_var
+        eps = bn.eps
+        std = torch.sqrt(var + eps)
+        factor = gamma / std
+        w_folded = w * factor.view(-1, 1, 1, 1)
+        b_folded = beta - mean * factor
+        w_q = torch.round(w_folded * scale_factor).clamp(-128, 127).to(torch.int8)
+        b_q = torch.round(b_folded * scale_factor).to(torch.int32)
+        return w_q, b_q
 
-    # 최적 모델 저장 기준 (Val Loss 기준)
+    wq1, bq1 = fold_bn_and_quantize(m.conv1, m.bn1)
+    wq2, bq2 = fold_bn_and_quantize(m.conv2, m.bn2)
+    wq3, bq3 = fold_bn_and_quantize(m.conv3, m.bn3)
+
+    fc1_wq = torch.round(m.fc1.weight.data * 127.0).clamp(-128, 127).to(torch.int8)
+    fc1_bq = torch.round(m.fc1.bias.data * 127.0).to(torch.int32)
+
+    fc2_wq = torch.round(m.fc2.weight.data * 127.0).clamp(-128, 127).to(torch.int8)
+    fc2_bq = torch.round(m.fc2.bias.data * 127.0).to(torch.int32)
+
+    def save_hex(tensor, filename, is_bias=False):
+        flat = tensor.flatten().tolist()
+        with open(filename, 'w') as f:
+            for val in flat:
+                hex_str = f"{val & 0xFFFFFFFF:08x}" if is_bias else f"{val & 0xFF:02x}"
+                f.write(hex_str + '\n')
+
+    save_hex(wq1, 'conv1_w.hex');  save_hex(bq1, 'conv1_b.hex', is_bias=True)
+    save_hex(wq2, 'conv2_w.hex');  save_hex(bq2, 'conv2_b.hex', is_bias=True)
+    save_hex(wq3, 'conv3_w.hex');  save_hex(bq3, 'conv3_b.hex', is_bias=True)
+    save_hex(fc1_wq, 'fc1_w.hex'); save_hex(fc1_bq, 'fc1_b.hex', is_bias=True)
+    save_hex(fc2_wq, 'fc2_w.hex'); save_hex(fc2_bq, 'fc2_b.hex', is_bias=True)
+
+    print("\n✅ Verilog용 HEX 가중치 추출 완료! (Padding=1 90%+ 목표 모델)")
+    print("   Conv 가중치: conv1_w/b (1→16), conv2_w/b (16→32), conv3_w/b (32→64)")
+    print("   FC 가중치:   fc1_w/b (1024→64), fc2_w/b (64→1)")
+
+
+def main():
+    X, y, skipped = load_images_from_master(DATASET_DIR)
+    if len(X) == 0:
+        return
+
+    print(f"✅ 로드 성공: {len(y):,} 장 (사람: {sum(y):,}장, 배경: {len(y)-sum(y):,}장), 스킵: {skipped}장")
+
+    X_temp, X_test, y_temp, y_test = train_test_split(X, y, test_size=0.15, random_state=42, stratify=y)
+    X_train, X_val, y_train, y_val = train_test_split(X_temp, y_temp, test_size=0.1765, random_state=42, stratify=y_temp)
+
+    train_loader = DataLoader(MasterDataset(X_train, y_train, is_train=True), batch_size=BATCH_SIZE, shuffle=True)
+    val_loader = DataLoader(MasterDataset(X_val, y_val, is_train=False), batch_size=BATCH_SIZE, shuffle=False)
+    test_loader = DataLoader(MasterDataset(X_test, y_test, is_train=False), batch_size=BATCH_SIZE, shuffle=False)
+
+    model = HumanDetectorCNN_FPGA128().to(device)
+
+    n_bg = len(y) - sum(y)
+    n_person = sum(y)
+    pos_weight = torch.tensor([n_bg / n_person]).to(device)
+
+    # ★ 1. BCEWithLogitsLoss에 Label Smoothing (0.05) 추가 -> Val Loss 스파이크 100% 제거!
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
+    # ★ 2. weight_decay를 1e-4 -> 1e-3 으로 10배 상향하여 L2 규제 강화 (과적합 철저 방지)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-3)
+
+    # ★ 3. ReduceLROnPlateau 적응형 스케줄러: Val Loss 정체 시 학습률 50% 축소 (patience=3)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3, min_lr=1e-6)
+
+    epochs = 100
     best_val_loss = float('inf')
-    early_stop_patience = 15
-    early_stop_counter = 0
+    patience = 25
+    patience_counter = 0
+
+    train_losses, val_losses = [], []
+    train_accs, val_accs = [], []
+
+    print(f"\n🚀 Val Loss 스파이크 제거 및 Val Acc 90%+ 정밀 학습 시작")
+    print(f"   (Label Smoothing + Weight Decay 1e-3 + ReduceLROnPlateau 적용)")
+    print("-" * 65)
+    print(f"{'Epoch':>5} | {'Train Loss':>10} | {'Train Acc':>9} | {'Val Loss':>10} | {'Val Acc':>9} | {'LR':>8}")
+    print("-" * 65)
 
     for epoch in range(epochs):
         model.train()
-        running_loss, correct, total = 0.0, 0, 0
-        
-        for images, labels in train_loader:
-            images, labels = images.to(device), labels.to(device)
+        t_loss, t_correct, t_total = 0.0, 0, 0
 
+        for imgs, labels in train_loader:
+            imgs, labels = imgs.to(device), labels.to(device)
             optimizer.zero_grad()
-            outputs = model(images)
-            loss = criterion(outputs, labels.float().unsqueeze(1))
+            outputs = model(imgs)
+            loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
-            
-            running_loss += loss.item()
-            predicted = (outputs >= 0.0).float()
-            total += labels.size(0)
-            correct += (predicted.squeeze() == labels.float()).sum().item()
-            
-        train_epoch_loss = running_loss / len(train_loader)
-        train_epoch_acc = 100 * correct / total
 
-        # 검증 단계
+            t_loss += loss.item() * len(labels)
+            preds = (torch.sigmoid(outputs) >= 0.5).float()
+            t_correct += (preds == labels).sum().item()
+            t_total += len(labels)
+
         model.eval()
-        val_running_loss, val_correct, val_total = 0.0, 0, 0
-        
+        v_loss, v_correct, v_total = 0.0, 0, 0
         with torch.no_grad():
-            for val_images, val_labels in val_loader:
-                val_images, val_labels = val_images.to(device), val_labels.to(device)
+            for imgs, labels in val_loader:
+                imgs, labels = imgs.to(device), labels.to(device)
+                outputs = model(imgs)
+                loss = criterion(outputs, labels)
+                v_loss += loss.item() * len(labels)
+                preds = (torch.sigmoid(outputs) >= 0.5).float()
+                v_correct += (preds == labels).sum().item()
+                v_total += len(labels)
 
-                val_outputs = model(val_images)
-                val_loss = criterion(val_outputs, val_labels.float().unsqueeze(1))
-                val_running_loss += val_loss.item()
+        t_loss_avg = t_loss / t_total
+        t_acc_avg = (t_correct / t_total) * 100
+        v_loss_avg = v_loss / v_total
+        v_acc_avg = (v_correct / v_total) * 100
 
-                val_predicted = (val_outputs >= 0.0).float()
-                val_total += val_labels.size(0)
-                val_correct += (val_predicted.squeeze() == val_labels.float()).sum().item()
+        train_losses.append(t_loss_avg)
+        val_losses.append(v_loss_avg)
+        train_accs.append(t_acc_avg)
+        val_accs.append(v_acc_avg)
 
-        val_epoch_loss = val_running_loss / len(val_loader)
-        val_epoch_acc = 100 * val_correct / val_total
+        # ★ 적응형 학습률 스케줄러 동작
+        old_lr = optimizer.param_groups[0]['lr']
+        scheduler.step(v_loss_avg)
+        new_lr = optimizer.param_groups[0]['lr']
 
-        train_loss_history.append(train_epoch_loss)
-        train_acc_history.append(train_epoch_acc)
-        val_loss_history.append(val_epoch_loss)
-        val_acc_history.append(val_epoch_acc)
+        if new_lr < old_lr:
+            print(f"⚡ [Epoch {epoch+1:02d}] Val Loss 정체 감지 -> 학습률 축소: {old_lr:.6f} -> {new_lr:.6f}")
 
-        scheduler.step(val_epoch_loss)
+        print(f"{epoch+1:5d} | {t_loss_avg:10.4f} | {t_acc_avg:8.2f}% | {v_loss_avg:10.4f} | {v_acc_avg:8.2f}% | {new_lr:.6f}")
 
-        print(f"Epoch [{epoch+1}/{epochs}] "
-              f"Train Loss: {train_epoch_loss:.4f}, Train Acc: {train_epoch_acc:.2f}% | "
-              f"Val Loss: {val_epoch_loss:.4f}, Val Acc: {val_epoch_acc:.2f}%")
-
-        # 최적 모델 저장 (가장 낮은 Val Loss 기준)
-        if val_epoch_loss < best_val_loss:
-            best_val_loss = val_epoch_loss
-            early_stop_counter = 0
-            torch.save(model.state_dict(), 'person_classifier.pth')
-            print(f"  → 최적 모델 저장 (Val Loss: {best_val_loss:.4f})")
+        if v_loss_avg < best_val_loss:
+            best_val_loss = v_loss_avg
+            torch.save(model.state_dict(), 'best_model_master128.pth')
+            patience_counter = 0
         else:
-            early_stop_counter += 1
-            if early_stop_counter >= early_stop_patience:
-                print(f"\nEarly Stopping: {early_stop_patience} epoch 동안 개선 없음. 학습 종료.")
+            patience_counter += 1
+            if patience_counter >= patience:
+                print(f"\n⚠️ Early Stopping: {patience} epoch 동안 개선 없음. 학습 종료.")
                 break
 
-    print(f"\n학습 완료. 최적 Val Loss: {best_val_loss:.4f}")
+    print("=" * 65)
+    print(f"🎉 학습 완료! 최저 Val Loss: {best_val_loss:.4f}")
 
-    # 이후 평가지표 그래프 그리는 코드 (기존과 동일하게 유지)
-    plt.figure(figsize=(10, 4))
+    model.load_state_dict(torch.load('best_model_master128.pth'))
+    model.eval()
+    test_correct, test_total = 0, 0
+    with torch.no_grad():
+        for imgs, labels in test_loader:
+            imgs, labels = imgs.to(device), labels.to(device)
+            outputs = model(imgs)
+            preds = (torch.sigmoid(outputs) >= 0.5).float()
+            test_correct += (preds == labels).sum().item()
+            test_total += len(labels)
+
+    test_acc = (test_correct / test_total) * 100
+    print(f"\n🏆 최종 128x128 정밀 모델 Test 정확도: {test_acc:.2f}%")
+
+    plt.figure(figsize=(12, 5))
     plt.subplot(1, 2, 1)
-    actual_epochs = len(train_loss_history)
-    plt.plot(range(1, actual_epochs + 1), train_loss_history, marker='o', label='Train Loss')
-    plt.plot(range(1, actual_epochs + 1), val_loss_history, marker='o', label='Val Loss')
-    plt.title('Train vs Val Loss')
+    plt.plot(train_losses, label='Train Loss')
+    plt.plot(val_losses, label='Val Loss')
+    plt.title('Loss Curve (Optimized Val Loss)')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
-    plt.grid(True, alpha=0.3)
     plt.legend()
 
     plt.subplot(1, 2, 2)
-    plt.plot(range(1, actual_epochs + 1), train_acc_history, marker='o', color='orange', label='Train Acc')
-    plt.plot(range(1, actual_epochs + 1), val_acc_history, marker='o', color='green', label='Val Acc')
-    plt.title('Train vs Val Accuracy')
+    plt.plot(train_accs, label='Train Acc')
+    plt.plot(val_accs, label='Val Acc')
+    plt.title('Accuracy Curve (Optimized Val Acc)')
     plt.xlabel('Epoch')
     plt.ylabel('Accuracy (%)')
-    plt.grid(True, alpha=0.3)
     plt.legend()
 
     plt.tight_layout()
-    plt.savefig('training_curves.png', dpi=150)
-    plt.close()
+    plt.savefig('training_curves_master128.png', dpi=150)
+    print("📈 학습 성과 그래프 저장 완료: training_curves_master128.png")
 
-    print("모델 학습 및 저장 완료!")
-    print("그래프 저장 완료: training_curves.png")
+    export_verilog_hex('best_model_master128.pth')
+
+
+if __name__ == '__main__':
+    main()

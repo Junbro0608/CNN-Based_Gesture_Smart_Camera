@@ -91,7 +91,7 @@ module frameBuffer #(
 endmodule
 
 module weight_mem #(
-    parameter WT_DEPTH        = 11187,  // ROM의 전체 방 개수 (Absolute)
+    parameter WT_DEPTH        = 11243,  // ROM의 전체 방 개수 (Absolute)
     parameter MAX_LAYER_WORDS = 8224,   // 단일 레이어 최대 접근 횟수 (fc1 기준)
     parameter DATA_WIDTH      = 64
 ) (
@@ -149,7 +149,26 @@ module rom #(
 
     // write (초기화)
     initial begin
-        $readmemh("int8_weights_conv_fc_be64.mem", mem);
+        integer fd;
+        string mem_path;
+
+        mem_path = "int8_weights_conv_fc_be64.mem";
+        fd = $fopen(mem_path, "r");
+        if (fd != 0) begin
+            $fclose(fd);
+            $readmemh(mem_path, mem);
+            $display("[ROM] loaded weights from %s", mem_path);
+        end else begin
+            mem_path = "D:/git_clone/CNN-Based_Gesture_Smart_Camera/Lab00_Dram_controller/Dram_controller/Dram_controller.srcs/sim_1/int8_weights_conv_fc_be64.mem";
+            fd = $fopen(mem_path, "r");
+            if (fd != 0) begin
+                $fclose(fd);
+                $readmemh(mem_path, mem);
+                $display("[ROM] loaded weights from %s", mem_path);
+            end else begin
+                $display("[ROM][WARN] cannot open weight memory file, keeping zeroes");
+            end
+        end
     end
 
     // read 

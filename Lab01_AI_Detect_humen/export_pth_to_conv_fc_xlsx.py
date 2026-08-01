@@ -14,6 +14,11 @@ COMBINED_BE64_MEM = Path("./save_pt/int8_weights_conv_fc_be64.mem")
 
 FC_OUTPUT_CHUNK = 8
 
+# Static int8 activation scales selected from the validation-set activation
+# ranges with headroom: Conv stages peak below 10 and ReLU(FC1) below 22.
+CONV_OUTPUT_SCALE = 0.1
+FC1_OUTPUT_SCALE = 0.2
+
 
 def int8_to_hex(value: int) -> str:
     return f"0x{(int(value) & 0xFF):02X}"
@@ -30,6 +35,19 @@ def u32_to_be_bytes(value: int):
 
 def word_bytes_to_hex(word_bytes):
     return "".join(f"{b:02X}" for b in word_bytes)
+
+
+def build_requant_params(scale_value: float, shift_val: int = 20, zero_point: int = 0):
+    effective_scale = float(scale_value) if scale_value is not None else 1.0
+    if effective_scale == 0.0:
+        effective_scale = 1.0
+    mult_factor = int(round(effective_scale * (2**shift_val)))
+    return {
+        "Requant Effective Scale": effective_scale,
+        "Requant MULT_FACTOR": mult_factor,
+        "Requant SHIFT_VAL": shift_val,
+        "Requant ZERO_POINT": zero_point,
+    }
 
 
 def summarize_conv_word(row_infos):
@@ -118,6 +136,12 @@ def quantize_int32_bias_fixed127(tensor: torch.Tensor):
     return q, arr, 1.0 / 127.0
 
 
+def quantize_int32_bias_for_accumulator(tensor, accumulator_scale: float):
+    arr = np.asarray(tensor, dtype=np.float32)
+    q = np.round(arr / accumulator_scale).astype(np.int32)
+    return q, arr, accumulator_scale
+
+
 def build_bn_folded_conv_bias(state_dict, layer_name: str, out_c: int):
     """
     Recover effective conv bias from BN when conv bias parameter does not exist.
@@ -154,6 +178,27 @@ def build_bn_folded_conv_bias(state_dict, layer_name: str, out_c: int):
     return b_fold
 
 
+def build_bn_folded_conv_weight(state_dict, layer_name: str):
+    """Fold inference-time BatchNorm scale into a convolution weight tensor."""
+    suffix = layer_name[4:]
+    bn_prefix = f"bn{suffix}"
+    required_keys = [
+        f"{layer_name}.weight",
+        f"{bn_prefix}.weight",
+        f"{bn_prefix}.running_var",
+    ]
+    if not layer_name.startswith("conv") or not suffix.isdigit():
+        return state_dict[f"{layer_name}.weight"]
+    if not all(key in state_dict for key in required_keys):
+        return state_dict[f"{layer_name}.weight"]
+
+    weight = state_dict[f"{layer_name}.weight"]
+    gamma = state_dict[f"{bn_prefix}.weight"]
+    variance = state_dict[f"{bn_prefix}.running_var"]
+    scale = gamma / torch.sqrt(variance + 1e-5)
+    return weight * scale.view(-1, 1, 1, 1)
+
+
 def get_conv_layers(state_dict):
     layers = []
     for key, value in state_dict.items():
@@ -185,19 +230,41 @@ def build_conv_format_rows(state_dict):
         weight_key = f"{layer_name}.weight"
         bias_key = f"{layer_name}.bias"
 
-        w_q, w_scale, w_zp = quantize_int8_dynamic(state_dict[weight_key])
+        conv_weight = build_bn_folded_conv_weight(state_dict, layer_name)
+        w_q, w_scale, w_zp = quantize_int8_dynamic(conv_weight)
         out_c, in_c, h, w = w_q.shape
+        # The model consumes x / 255 at Conv1. Later convolution inputs use
+        # the static int8 scale produced by the preceding Conv stage.
+        input_scale = 1.0 / 255.0 if layer_name == "conv1" else CONV_OUTPUT_SCALE
+        accumulator_scale = input_scale * w_scale
+        weight_requant = build_requant_params(
+            accumulator_scale / CONV_OUTPUT_SCALE
+        )
 
         if bias_key in state_dict:
-            b_q, b_float, b_scale = quantize_int32_bias_fixed127(state_dict[bias_key])
+            b_q, b_float, b_scale = quantize_int32_bias_for_accumulator(
+                state_dict[bias_key].detach().cpu().numpy(), accumulator_scale
+            )
+            bias_requant = build_requant_params(b_scale)
         else:
             folded_bias = build_bn_folded_conv_bias(state_dict, layer_name, out_c)
             if folded_bias is not None:
-                b_q, b_float, b_scale = quantize_int32_bias_fixed127(torch.from_numpy(folded_bias))
+                b_q, b_float, b_scale = quantize_int32_bias_for_accumulator(
+                    folded_bias, accumulator_scale
+                )
             else:
                 b_q = np.zeros(out_c, dtype=np.int32)
                 b_float = np.zeros(out_c, dtype=np.float32)
                 b_scale = 1.0
+            bias_requant = build_requant_params(b_scale)
+
+        if layer_name == "conv1":
+            # The image MEM stores x_signed = x_unsigned - 128. Preserve the
+            # Conv1 integer MAC result: sum(w_q * x_unsigned) + b_q equals
+            # sum(w_q * x_signed) + (b_q + 128 * sum(w_q)).
+            input_offset_compensation = 128 * w_q.astype(np.int32).sum(axis=(1, 2, 3))
+            b_q = b_q + input_offset_compensation
+            b_float = b_float + input_offset_compensation.astype(np.float32) * b_scale
 
         for out_base in range(0, out_c, 8):
             out_end = min(out_base + 8, out_c)
@@ -221,6 +288,7 @@ def build_conv_format_rows(state_dict):
                                     "INT8 Hex": int8_to_hex(value),
                                     "Scale": w_scale,
                                     "Zero Point": w_zp,
+                                    **weight_requant,
                                 }
                             )
                         word_addr += 1
@@ -245,6 +313,7 @@ def build_conv_format_rows(state_dict):
                             "INT8 Hex": np.nan,
                             "Scale": b_scale,
                             "Zero Point": 0,
+                            **bias_requant,
                         }
                     )
                 word_addr += 1
@@ -262,13 +331,28 @@ def build_fc_reordered_rows(state_dict):
 
         w_q, w_scale, w_zp = quantize_int8_fixed127(state_dict[weight_key])
         out_nodes, in_nodes = w_q.shape
+        if layer_name == "fc1":
+            input_scale = CONV_OUTPUT_SCALE
+            output_scale = FC1_OUTPUT_SCALE
+        elif layer_name == "fc2":
+            input_scale = FC1_OUTPUT_SCALE
+            output_scale = 1.0
+        else:
+            input_scale = 1.0
+            output_scale = 1.0
+        accumulator_scale = input_scale * w_scale
+        weight_requant = build_requant_params(accumulator_scale / output_scale)
 
         if bias_key in state_dict:
-            b_q, b_float, b_scale = quantize_int32_bias_fixed127(state_dict[bias_key])
+            b_q, b_float, b_scale = quantize_int32_bias_for_accumulator(
+                state_dict[bias_key].detach().cpu().numpy(), accumulator_scale
+            )
+            bias_requant = build_requant_params(b_scale)
         else:
             b_q = np.zeros(out_nodes, dtype=np.int32)
             b_float = np.zeros(out_nodes, dtype=np.float32)
             b_scale = 1.0
+            bias_requant = build_requant_params(b_scale)
 
         for out_base in range(0, out_nodes, FC_OUTPUT_CHUNK):
             out_end = min(out_base + FC_OUTPUT_CHUNK, out_nodes)
@@ -287,6 +371,7 @@ def build_fc_reordered_rows(state_dict):
                             "Bias Float": np.nan,
                             "Scale": w_scale,
                             "Zero Point": w_zp,
+                            **weight_requant,
                         }
                     )
 
@@ -303,6 +388,7 @@ def build_fc_reordered_rows(state_dict):
                         "Bias Float": float(b_float[out_idx]),
                         "Scale": b_scale,
                         "Zero Point": 0,
+                        **bias_requant,
                     }
                 )
 
@@ -372,9 +458,29 @@ def build_be64_sheet_rows_from_conv(conv_rows):
 
 
 def build_be64_sheet_rows_from_fc(fc_rows):
+    packed_rows = []
+    word_addr = 0
+
+    # FC2 has one output lane. The current FC hardware consumes that lane from
+    # weight_word[7:0], so emit one 64-bit word per input weight with the
+    # weight in the low byte instead of packing eight input weights together.
+    fc2_rows = [
+        row for row in fc_rows
+        if str(row["Label (주석)"]).startswith("fc2_")
+    ]
+    fc2_weight_rows = [
+        row for row in fc_rows
+        if row["Param Type"] == "weight"
+        and str(row["Label (주석)"]).startswith("fc2_")
+    ]
+    fc2_bias_rows = [
+        row for row in fc2_rows if row["Param Type"] == "bias"
+    ]
+    non_fc2_rows = [row for row in fc_rows if row not in fc2_rows]
+
     byte_stream = []
     byte_infos = []
-    for row in fc_rows:
+    for row in non_fc2_rows:
         bit_width = int(row["Bit Width"])
         value = int(row["Value"])
         info = {
@@ -394,13 +500,19 @@ def build_be64_sheet_rows_from_fc(fc_rows):
         byte_stream.append(0)
         byte_infos.append({"label": "pad", "param_type": "pad"})
 
-    packed_rows = []
     for addr in range(len(byte_stream) // 8):
         start = addr * 8
         end = (addr + 1) * 8
         chunk = byte_stream[start:end]
         chunk_infos = byte_infos[start:end]
-        word_bytes = list(reversed(chunk))
+        if all(info["param_type"] == "bias" for info in chunk_infos):
+            # FC bias words hold out1 in [63:32] and out0 in [31:0].
+            # Keep each signed int32 in big-endian byte order; only exchange
+            # the two 32-bit positions from the export stream.
+            word_bytes = chunk[4:8] + chunk[0:4]
+        else:
+            # FC weight bytes map output lane 0 to weight_word[7:0].
+            word_bytes = list(reversed(chunk))
         labels_in_word = []
         seen = set()
         for info in chunk_infos:
@@ -411,7 +523,7 @@ def build_be64_sheet_rows_from_fc(fc_rows):
             labels_in_word.append(info)
         packed_rows.append(
             {
-                "Word Address": addr,
+                "Word Address": word_addr,
                 "Comment": summarize_fc_word(labels_in_word) if labels_in_word else "pad",
                 "BE64 Hex": word_bytes_to_hex(word_bytes),
                 "Byte0": f"0x{word_bytes[0]:02X}",
@@ -424,6 +536,49 @@ def build_be64_sheet_rows_from_fc(fc_rows):
                 "Byte7": f"0x{word_bytes[7]:02X}",
             }
         )
+        word_addr += 1
+
+    for row in fc2_weight_rows:
+        value = int(row["Value"]) & 0xFF
+        label = str(row["Label (주석)"])
+        word_bytes = [0, 0, 0, 0, 0, 0, 0, value]
+        packed_rows.append(
+            {
+                "Word Address": word_addr,
+                "Comment": f"fc2 | out0 | weight | {label}",
+                "BE64 Hex": word_bytes_to_hex(word_bytes),
+                "Byte0": "0x00",
+                "Byte1": "0x00",
+                "Byte2": "0x00",
+                "Byte3": "0x00",
+                "Byte4": "0x00",
+                "Byte5": "0x00",
+                "Byte6": "0x00",
+                "Byte7": f"0x{value:02X}",
+            }
+        )
+        word_addr += 1
+
+    for row in fc2_bias_rows:
+        value = int(row["Value"])
+        label = str(row["Label (주석)"])
+        word_bytes = [0, 0, 0, 0, *u32_to_be_bytes(value)]
+        packed_rows.append(
+            {
+                "Word Address": word_addr,
+                "Comment": f"fc2 | bias | {label}",
+                "BE64 Hex": word_bytes_to_hex(word_bytes),
+                "Byte0": "0x00",
+                "Byte1": "0x00",
+                "Byte2": "0x00",
+                "Byte3": "0x00",
+                "Byte4": f"0x{word_bytes[4]:02X}",
+                "Byte5": f"0x{word_bytes[5]:02X}",
+                "Byte6": f"0x{word_bytes[6]:02X}",
+                "Byte7": f"0x{word_bytes[7]:02X}",
+            }
+        )
+        word_addr += 1
 
     return packed_rows
 

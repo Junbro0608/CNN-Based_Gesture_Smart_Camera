@@ -36,9 +36,10 @@ module fc_core #(
     localparam WT_ADDR_BITS = $clog2(WT_ADDR_WIDTH);
     localparam DATA_ADDR_BITS = $clog2(DATA_ADDR_WIDTH);
 
-    // Final FC의 확정 threshold는 signed accumulator domain의 0이다.
-    localparam signed [ACC_WIDTH-1:0]
-        INTERNAL_THRESHOLD_ACC = {ACC_WIDTH{1'b0}};
+    // Final FC의 출력 판정은 signed accumulator domain의 threshold를 사용한다.
+    // 기본값은 0보다 약간 낮게 잡아, 작은 양수/음수 오차에 의해 결과가
+    // 지나치게 0으로 몰리지 않도록 한다.
+    parameter signed [ACC_WIDTH-1:0] OUTPUT_THRESHOLD_ACC = -32'sd1;
 
     logic               start_accept;
     logic               controller_busy;
@@ -50,12 +51,10 @@ module fc_core #(
     logic        [ 7:0] lane_valid;
     logic               output_capture_en;
     logic        [ 2:0] output_read_lane_index;
-    logic               quant_input_valid;
-    logic               quant_result_valid;
     logic               result_capture_en;
     logic signed [ 7:0] activation_s8;
     logic signed [ 7:0] quantized_write_s8;
-    logic        [ 7:0] quantized_write_u8;
+    logic signed [ 7:0] fc_write_s8;
 
     logic signed [31:0] accumulator_0_s32;
     logic signed [31:0] accumulator_1_s32;
@@ -81,7 +80,9 @@ module fc_core #(
     assign pe_array_mac_valid = pe_mac_enable;
 
     assign activation_s8 = $signed(core_data_read_data[7:0]);
-    assign core_data_write_data = quantized_write_u8;
+    assign fc_write_s8 = (layer == 3'd4 && quantized_write_s8 < 0)
+        ? 8'sd0 : quantized_write_s8;
+    assign core_data_write_data = fc_write_s8;
 
     // 기본 Weight depth 1280은 최대 128x128 구성의 2112 words보다 작다.
     // 외부 통합 전 실제 Buffer depth로 override하거나 팀 사양을 확정해야 한다.
@@ -89,20 +90,13 @@ module fc_core #(
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             result <= 1'b0;
-            quant_result_valid <= 1'b0;
-            quantized_write_u8 <= 8'd0;
         end else if (start_accept) begin
             // 새 연산을 수락하면 이전 최종 결과를 지운다.
             result <= 1'b0;
-            quant_result_valid <= 1'b0;
-        end else if (result_capture_en) begin
-            // MAC capture 후 Bias까지 반영된 PE0 buffer를 signed 0과 비교한다.
-            result <= ($signed(buffered_accumulator_0_s32) >= $signed(INTERNAL_THRESHOLD_ACC));
-        end else begin
-            quant_result_valid <= quant_input_valid;
-
-            if (quant_input_valid)
-                quantized_write_u8 <= quantized_write_s8;
+        end else if (result_capture_en || Done) begin
+            // MAC capture 후 Bias까지 반영된 PE0 buffer를 threshold와 비교한다.
+            // 최종 단계가 끝났을 때도 결과를 반영하도록 fallback한다.
+            result <= ($signed(buffered_accumulator_0_s32) >= $signed(OUTPUT_THRESHOLD_ACC));
         end
     end
 
@@ -124,7 +118,6 @@ module fc_core #(
         .input_length           (input_length),
         .output_length          (output_length),
         .finish_en              (finish_en),
-        .quant_result_valid     (quant_result_valid),
         .start_accept           (start_accept),
         .busy                   (controller_busy),
         .Done                   (Done),
@@ -139,7 +132,6 @@ module fc_core #(
         .lane_valid             (lane_valid),
         .output_capture_en      (output_capture_en),
         .output_read_lane_index (output_read_lane_index),
-        .quant_input_valid      (quant_input_valid),
         .result_capture_en      (result_capture_en)
     );
 

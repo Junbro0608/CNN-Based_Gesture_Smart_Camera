@@ -10,6 +10,8 @@ module padding #(
     input logic [7:0] padding_size,  // 원본 타일 크기: 128/64/32
     input logic img_MUX_sel,  // 1: img_mem 읽기, 0: data_mem 읽기
     input logic padding_en,  // 1: 패딩 좌표 모드
+    input logic direct_raddr_en,  // 1: Pool4/5 direct data-buffer address
+    input logic [$clog2(DATA_ADDR_WIDTH)-1:0] direct_raddr,
     input  logic [TILE_INDEX_WIDTH-1:0]                tile_index,    // 연결된 data_mem 안에서 몇 번째 타일인지
     input logic [7:0] pad_row,  // 현재 타일의 패딩 포함 row 좌표
     input logic [7:0] pad_col,  // 현재 타일의 패딩 포함 col 좌표
@@ -100,6 +102,13 @@ module padding #(
                 data_raddr = src_addr[$clog2(DATA_ADDR_WIDTH)-1:0];
                 conv_rdata = data_rdata;
             end
+        end
+
+        // Pool4/Pool5 have no padding coordinates. Forward the address from
+        // Standalone_MaxPool through the existing padding-to-buffer path.
+        if (direct_raddr_en) begin
+            data_raddr = direct_raddr;
+            conv_rdata = data_rdata;
         end
     end
 endmodule

@@ -5,13 +5,13 @@ module tb_CNN_accelerator_mem;
 	localparam int IMG_WIDTH  = 128;
 	localparam int IMG_HEIGHT = 128;
 	localparam int IMG_PIXELS = IMG_WIDTH * IMG_HEIGHT;
+	localparam int PERSON_COUNT = 2;
+	localparam int NONPERSON_COUNT = 2;
+	localparam int TOTAL_CASES = PERSON_COUNT + NONPERSON_COUNT;
 	localparam int TIMEOUT_CYCLES = 8000000;
 	localparam string MEM_BASE_DIR = "D:/git_clone/CNN-Based_Gesture_Smart_Camera/Lab00_Dram_controller/Dram_controller/Dram_controller.srcs/sim_1/test_img/mem_out";
-	localparam bit ENABLE_CONSOLE_LOG = 1'b0;
+	localparam bit ENABLE_CONSOLE_LOG = 1'b1;
 	localparam bit ENABLE_FILE_LOG = 1'b0;
-
-	localparam string PERSON_MEM     = {MEM_BASE_DIR, "/person0.mem"};
-	localparam string NONPERSON_MEM  = {MEM_BASE_DIR, "/nonperson0.mem"};
 
 	logic clk;
 	logic rst_n;
@@ -149,7 +149,39 @@ module tb_CNN_accelerator_mem;
 		end
 	endtask
 
-	task automatic run_case(input string mem_path, input logic expected_result);
+	task automatic dump_fc1_features(input string label);
+		int feature_index;
+		begin
+			$display("[TB][FC1_FEATURES] %s", label);
+			for (feature_index = 0; feature_index < 64; feature_index = feature_index + 1) begin
+				$display("[TB][FC1_FEATURE] index=%0d value=%0d", feature_index,
+					$signed(dut.U_Data_Buffer.U_frameBuffer_B.mem[feature_index]));
+			end
+		end
+	endtask
+
+	task automatic dump_fc1_input_signature(input string label);
+		int feature_index;
+		integer value_sum;
+		integer index_weighted_sum;
+		begin
+			value_sum = 0;
+			index_weighted_sum = 0;
+			for (feature_index = 0; feature_index < 1024; feature_index = feature_index + 1) begin
+				value_sum = value_sum + $signed(dut.U_Data_Buffer.U_frameBuffer_A.mem[feature_index]);
+				index_weighted_sum = index_weighted_sum
+					+ feature_index * $signed(dut.U_Data_Buffer.U_frameBuffer_A.mem[feature_index]);
+			end
+			$display("[TB][FC1_INPUT_SIGNATURE] %s sum=%0d weighted_sum=%0d",
+				label, value_sum, index_weighted_sum);
+		end
+	endtask
+
+	task automatic run_case(
+		input string mem_path,
+		input logic expected_result,
+		input logic dump_features
+	);
 		logic case_pass;
 		bit load_ok;
 		logic signed [31:0] final_score_s32;
@@ -194,6 +226,10 @@ module tb_CNN_accelerator_mem;
 				$display("[TB] final_score_s32=%0d (0x%08h), score_pct=%0.2f%%, done_score_s32=%0d, decision_valid=%0b, decision_result=%0b", final_score_s32, final_score_s32, final_score_pct, done_score_s32, decision_score_valid, decision_result_bit);
 			if (ENABLE_FILE_LOG && (log_fd != 0))
 				$fdisplay(log_fd, "[TB] final_score_s32=%0d (0x%08h), score_pct=%0.2f%%, done_score_s32=%0d, decision_valid=%0b, decision_result=%0b", final_score_s32, final_score_s32, final_score_pct, done_score_s32, decision_score_valid, decision_result_bit);
+			if (ENABLE_CONSOLE_LOG && dump_features)
+				dump_fc1_features(mem_path);
+			if (ENABLE_CONSOLE_LOG && dump_features)
+				dump_fc1_input_signature(mem_path);
 			case_pass = (result === expected_result);
 			expect_bit({"result for ", mem_path}, result, expected_result);
 			if (!case_pass) begin
@@ -210,6 +246,22 @@ module tb_CNN_accelerator_mem;
 			@(posedge clk);
 			while (done === 1'b1) begin
 				@(posedge clk);
+			end
+		end
+	endtask
+
+	task automatic run_cases;
+		int image_index;
+		string mem_path;
+		begin
+			for (image_index = 0; image_index < PERSON_COUNT; image_index = image_index + 1) begin
+				mem_path = $sformatf("%s/person%0d.mem", MEM_BASE_DIR, image_index);
+				run_case(mem_path, 1'b1, image_index == 0);
+			end
+
+			for (image_index = 0; image_index < NONPERSON_COUNT; image_index = image_index + 1) begin
+				mem_path = $sformatf("%s/nonperson%0d.mem", MEM_BASE_DIR, image_index);
+				run_case(mem_path, 1'b0, image_index == 0);
 			end
 		end
 	endtask
@@ -236,12 +288,11 @@ module tb_CNN_accelerator_mem;
 		rst_n = 1'b1;
 		repeat (2) @(posedge clk);
 
-		run_case(PERSON_MEM, 1'b1);
-		run_case(NONPERSON_MEM, 1'b0);
+		run_cases();
 
 		if (err_count == 0) begin
-			if (ENABLE_CONSOLE_LOG) $display("\nALL TESTS PASSED");
-			if (ENABLE_FILE_LOG && (log_fd != 0)) $fdisplay(log_fd, "ALL TESTS PASSED");
+			if (ENABLE_CONSOLE_LOG) $display("\nALL TESTS PASSED (%0d cases)", TOTAL_CASES);
+			if (ENABLE_FILE_LOG && (log_fd != 0)) $fdisplay(log_fd, "ALL TESTS PASSED (%0d cases)", TOTAL_CASES);
 		end else begin
 			if (ENABLE_CONSOLE_LOG) $display("\nTEST FAILED: err_count=%0d", err_count);
 			if (ENABLE_FILE_LOG && (log_fd != 0))

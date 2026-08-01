@@ -32,6 +32,19 @@ module tb_CNN_accelerator_mem_all;
 	logic signed [31:0] decision_score_s32;
 	logic decision_score_valid;
 	logic decision_result_bit;
+	int fc1_write_count;
+	int fc1_nonzero_count;
+	logic signed [7:0] fc1_min_s8;
+	logic signed [7:0] fc1_max_s8;
+	int fc1_input_count;
+	int fc1_input_nonzero_count;
+	logic signed [7:0] fc1_input_min_s8;
+	logic signed [7:0] fc1_input_max_s8;
+	int conv_write_count [1:3];
+	int conv_sat_count [1:3];
+	logic signed [7:0] conv_min_s8 [1:3];
+	logic signed [7:0] conv_max_s8 [1:3];
+	integer conv_stat_layer;
 
 	CNN_accelerator dut (
 		.sysclk   (clk),
@@ -51,6 +64,32 @@ module tb_CNN_accelerator_mem_all;
 		img_rdata <= img_mem[img_raddr];
 	end
 
+	always_ff @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			for (conv_stat_layer = 1; conv_stat_layer <= 3; conv_stat_layer = conv_stat_layer + 1) begin
+				conv_write_count[conv_stat_layer] <= 0;
+				conv_sat_count[conv_stat_layer] <= 0;
+				conv_min_s8[conv_stat_layer] <= 8'sd127;
+				conv_max_s8[conv_stat_layer] <= -8'sd128;
+			end
+		end else if (start) begin
+			for (conv_stat_layer = 1; conv_stat_layer <= 3; conv_stat_layer = conv_stat_layer + 1) begin
+				conv_write_count[conv_stat_layer] <= 0;
+				conv_sat_count[conv_stat_layer] <= 0;
+				conv_min_s8[conv_stat_layer] <= 8'sd127;
+				conv_max_s8[conv_stat_layer] <= -8'sd128;
+			end
+		end else if (dut.conv_DATA_we && dut.layer >= 3'd1 && dut.layer <= 3'd3) begin
+			conv_write_count[dut.layer] <= conv_write_count[dut.layer] + 1;
+			if (dut.conv_DATA_wdata == 8'sd127)
+				conv_sat_count[dut.layer] <= conv_sat_count[dut.layer] + 1;
+			if (dut.conv_DATA_wdata < conv_min_s8[dut.layer])
+				conv_min_s8[dut.layer] <= dut.conv_DATA_wdata;
+			if (dut.conv_DATA_wdata > conv_max_s8[dut.layer])
+				conv_max_s8[dut.layer] <= dut.conv_DATA_wdata;
+		end
+	end
+
 	// Capture the exact score used at FC decision timing.
 	always_ff @(posedge clk or negedge rst_n) begin
 		if (!rst_n) begin
@@ -65,6 +104,44 @@ module tb_CNN_accelerator_mem_all;
 				decision_result_bit <= ($signed(dut.U_FC.u_fc_core.buffered_accumulator_0_s32) >= 0);
 				decision_score_valid <= 1'b1;
 			end
+		end
+	end
+
+	always_ff @(posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			fc1_write_count <= 0;
+			fc1_nonzero_count <= 0;
+			fc1_min_s8 <= 8'sd127;
+			fc1_max_s8 <= -8'sd128;
+			fc1_input_count <= 0;
+			fc1_input_nonzero_count <= 0;
+			fc1_input_min_s8 <= 8'sd127;
+			fc1_input_max_s8 <= -8'sd128;
+		end else if (dut.U_FC.u_fc_core.start_accept && dut.layer == 3'd4) begin
+			fc1_write_count <= 0;
+			fc1_nonzero_count <= 0;
+			fc1_min_s8 <= 8'sd127;
+			fc1_max_s8 <= -8'sd128;
+			fc1_input_count <= 0;
+			fc1_input_nonzero_count <= 0;
+			fc1_input_min_s8 <= 8'sd127;
+			fc1_input_max_s8 <= -8'sd128;
+		end else if (dut.U_FC.u_fc_core.pe_mac_enable && dut.layer == 3'd4) begin
+			fc1_input_count <= fc1_input_count + 1;
+			if (dut.U_FC.u_fc_core.activation_s8 != 0)
+				fc1_input_nonzero_count <= fc1_input_nonzero_count + 1;
+			if (dut.U_FC.u_fc_core.activation_s8 < fc1_input_min_s8)
+				fc1_input_min_s8 <= dut.U_FC.u_fc_core.activation_s8;
+			if (dut.U_FC.u_fc_core.activation_s8 > fc1_input_max_s8)
+				fc1_input_max_s8 <= dut.U_FC.u_fc_core.activation_s8;
+		end else if (dut.U_FC.DATA_we && dut.layer == 3'd4) begin
+			fc1_write_count <= fc1_write_count + 1;
+			if ($signed(dut.U_FC.DATA_wdata) != 0)
+				fc1_nonzero_count <= fc1_nonzero_count + 1;
+			if ($signed(dut.U_FC.DATA_wdata) < fc1_min_s8)
+				fc1_min_s8 <= $signed(dut.U_FC.DATA_wdata);
+			if ($signed(dut.U_FC.DATA_wdata) > fc1_max_s8)
+				fc1_max_s8 <= $signed(dut.U_FC.DATA_wdata);
 		end
 	end
 
@@ -199,6 +276,15 @@ module tb_CNN_accelerator_mem_all;
 			final_score_pct = (clipped_score_s32 * 100.0) / 127.0;
 			if (ENABLE_CONSOLE_LOG)
 				$display("[TB] final_score_s32=%0d (0x%08h), score_pct=%0.2f%%, done_score_s32=%0d, decision_valid=%0b, decision_result=%0b", final_score_s32, final_score_s32, final_score_pct, done_score_s32, decision_score_valid, decision_result_bit);
+			if (ENABLE_CONSOLE_LOG)
+				$display("[TB] fc1 writes=%0d nonzero=%0d range=%0d..%0d", fc1_write_count, fc1_nonzero_count, fc1_min_s8, fc1_max_s8);
+			if (ENABLE_CONSOLE_LOG)
+				$display("[TB] fc1 inputs=%0d nonzero=%0d range=%0d..%0d", fc1_input_count, fc1_input_nonzero_count, fc1_input_min_s8, fc1_input_max_s8);
+			if (ENABLE_CONSOLE_LOG)
+				$display("[TB] conv writes/saturated/range: L1=%0d/%0d/%0d..%0d L2=%0d/%0d/%0d..%0d L3=%0d/%0d/%0d..%0d",
+					conv_write_count[1], conv_sat_count[1], conv_min_s8[1], conv_max_s8[1],
+					conv_write_count[2], conv_sat_count[2], conv_min_s8[2], conv_max_s8[2],
+					conv_write_count[3], conv_sat_count[3], conv_min_s8[3], conv_max_s8[3]);
 			if (ENABLE_FILE_LOG && (log_fd != 0))
 				$fdisplay(log_fd, "[TB] final_score_s32=%0d (0x%08h), score_pct=%0.2f%%, done_score_s32=%0d, decision_valid=%0b, decision_result=%0b", final_score_s32, final_score_s32, final_score_pct, done_score_s32, decision_score_valid, decision_result_bit);
 			case_pass = (result === expected_result);
@@ -258,6 +344,12 @@ module tb_CNN_accelerator_mem_all;
 		repeat (5) @(posedge clk);
 		rst_n = 1'b1;
 		repeat (2) @(posedge clk);
+		if (ENABLE_CONSOLE_LOG)
+			$display("[TB][CONFIG] conv_mult=%0d/%0d/%0d fc2_bias_word=0x%016h",
+				dut.U_conv.U_REQUANTIZE_CONV_WRITE.MULT_FACTOR_L1,
+				dut.U_conv.U_REQUANTIZE_CONV_WRITE.MULT_FACTOR_L2,
+				dut.U_conv.U_REQUANTIZE_CONV_WRITE.MULT_FACTOR_L3,
+				dut.U_weight_mem.U_weight_rom.mem[11242]);
 
 		run_all_cases();
 
