@@ -49,11 +49,23 @@ module fc_core #(
     logic               pe_mac_enable;
     logic               pe_array_mac_valid;
     logic        [ 7:0] lane_valid;
+    (* max_fanout = 8 *)
+    logic signed [ 7:0] activation_reg;
+    logic        [63:0] weight_word_reg;
+    logic        [ 7:0] mac_lane_valid_reg;
     logic               output_capture_en;
     logic        [ 2:0] output_read_lane_index;
+    logic               quant_acc_capture_en;
+    logic               quant_result_capture_en;
     logic               result_capture_en;
+    logic               controller_data_write_en;
+    logic [DATA_ADDR_BITS-1:0] controller_data_write_offset;
+    logic [DATA_DATA_WIDTH-1:0] controller_data_write_data;
     logic signed [ 7:0] activation_s8;
     logic signed [ 7:0] quantized_write_s8;
+    logic               quantized_write_valid;
+    logic signed [31:0] quant_accumulator_s32;
+    logic signed [ 7:0] quantized_result_s8;
     logic signed [ 7:0] fc_write_s8;
 
     logic signed [31:0] accumulator_0_s32;
@@ -75,14 +87,45 @@ module fc_core #(
     logic signed [31:0] buffered_accumulator_7_s32;
     logic signed [31:0] selected_accumulator_s32;
 
-    // Synchronous memory operands are consumed on MAC edges.
-    // The controller prefetches next-cycle addresses.
-    assign pe_array_mac_valid = pe_mac_enable;
+    // Register both memory operands before the PE MAC. The controller drains
+    // the final registered operand before capturing the accumulators.
+    assign pe_array_mac_valid = mac_lane_valid_reg != 8'b0;
 
     assign activation_s8 = $signed(core_data_read_data[7:0]);
-    assign fc_write_s8 = (layer == 3'd4 && quantized_write_s8 < 0)
-        ? 8'sd0 : quantized_write_s8;
-    assign core_data_write_data = fc_write_s8;
+    assign fc_write_s8 = (layer == 3'd4 && quantized_result_s8 < 0)
+        ? 8'sd0 : quantized_result_s8;
+    assign controller_data_write_data = fc_write_s8;
+
+    // Keep the controller FSM and requantize mux off the Data Buffer write
+    // path. The synchronous RAM receives this stable registered command.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            activation_reg         <= 8'sd0;
+            weight_word_reg        <= 64'd0;
+            mac_lane_valid_reg     <= 8'b0;
+            core_data_write_en     <= 1'b0;
+            core_data_write_offset <= '0;
+            core_data_write_data   <= '0;
+            quant_accumulator_s32  <= 32'sd0;
+            quantized_result_s8    <= 8'sd0;
+        end else begin
+            mac_lane_valid_reg <= pe_mac_enable ? lane_valid : 8'b0;
+            if (pe_mac_enable) begin
+                activation_reg  <= $signed(core_data_read_data[7:0]);
+                weight_word_reg <= core_weight_read_data;
+            end
+
+            if (quant_acc_capture_en)
+                quant_accumulator_s32 <= selected_accumulator_s32;
+
+            if (quant_result_capture_en)
+                quantized_result_s8 <= quantized_write_s8;
+
+            core_data_write_en     <= controller_data_write_en;
+            core_data_write_offset <= controller_data_write_offset;
+            core_data_write_data   <= controller_data_write_data;
+        end
+    end
 
     // 기본 Weight depth 1280은 최대 128x128 구성의 2112 words보다 작다.
     // 외부 통합 전 실제 Buffer depth로 override하거나 팀 사양을 확정해야 한다.
@@ -100,9 +143,13 @@ module fc_core #(
         end
     end
 
-    requantize U_REQUANTIZE_FC_WRITE (
-        .layer   (layer),
-        .acc_in  (selected_accumulator_s32),
+    requantize_pipeline U_REQUANTIZE_FC_WRITE (
+        .clk      (clk),
+        .rst_n    (rst_n),
+        .in_valid (quant_acc_capture_en),
+        .layer    (layer),
+        .acc_in   (selected_accumulator_s32),
+        .out_valid(quantized_write_valid),
         .quant_out(quantized_write_s8)
     );
 
@@ -123,8 +170,8 @@ module fc_core #(
         .Done                   (Done),
         .core_weight_read_offset(core_weight_read_offset),
         .core_data_read_offset  (core_data_read_offset),
-        .core_data_write_en     (core_data_write_en),
-        .core_data_write_offset (core_data_write_offset),
+        .core_data_write_en     (controller_data_write_en),
+        .core_data_write_offset (controller_data_write_offset),
         .pe_acc_clear           (pe_acc_clear),
         .output_bias_add_en     (output_bias_add_en),
         .output_bias_word_index (output_bias_word_index),
@@ -132,16 +179,19 @@ module fc_core #(
         .lane_valid             (lane_valid),
         .output_capture_en      (output_capture_en),
         .output_read_lane_index (output_read_lane_index),
+        .quant_acc_capture_en   (quant_acc_capture_en),
+        .quant_result_capture_en(quant_result_capture_en),
+        .quant_result_valid     (quantized_write_valid),
         .result_capture_en      (result_capture_en)
     );
 
     fc_pe_array u_fc_pe_array (
         .clk              (clk),
         .rst_n            (rst_n),
-        .activation_u8    (activation_s8),
+        .activation_u8    (activation_reg),
         .bias_load        (pe_acc_clear),
         .mac_valid        (pe_array_mac_valid),
-        .weight_word      (core_weight_read_data),
+        .weight_word      (weight_word_reg),
         .bias_0_s32       (32'sd0),
         .bias_1_s32       (32'sd0),
         .bias_2_s32       (32'sd0),
@@ -150,7 +200,7 @@ module fc_core #(
         .bias_5_s32       (32'sd0),
         .bias_6_s32       (32'sd0),
         .bias_7_s32       (32'sd0),
-        .lane_valid       (lane_valid),
+        .lane_valid       (pe_acc_clear ? lane_valid : mac_lane_valid_reg),
         .accumulator_0_s32(accumulator_0_s32),
         .accumulator_1_s32(accumulator_1_s32),
         .accumulator_2_s32(accumulator_2_s32),

@@ -21,14 +21,13 @@ module Conv_Controller #(
     input  logic [CONFIG_WIDTH-1:0] cfg_image_width,
     input  logic [CONFIG_WIDTH-1:0] cfg_image_height,
     input  logic [CONFIG_WIDTH-1:0] cfg_input_channels,
-    input  logic [CONFIG_WIDTH-1:0] cfg_output_channel_base,
-    input  logic [ADDR_WIDTH-1:0]   weight_base_addr,
+    input  logic [ADDR_WIDTH-1:0]   cfg_write_pixels_per_channel,
+    input  logic [ADDR_WIDTH-1:0]   cfg_write_group_base_addr,
     output logic                    busy,
     output logic                    done,
 
     // External Weight Buffer request and CNN-local register status.
     output logic                  weight_load_start,
-    output logic [ADDR_WIDTH-1:0] weight_load_addr,
     input  logic                  weight_load_ready,
     input  logic                  weight_valid,
 
@@ -75,12 +74,13 @@ module Conv_Controller #(
     // Nine signed 8-bit weights and one signed 32-bit bias per channel.
     localparam integer WEIGHT_PACKET_BYTES = 13 * NUM_CH;
 
-    typedef enum logic [2:0] {
+    typedef enum logic [3:0] {
         IDLE,
         SET_WEIGHT_DATA,
         CONV,
         POST_PROCESS,
         PUSH_DATA,
+        WRITE_DRAIN,
         DONE
     } state_t;
 
@@ -88,6 +88,7 @@ module Conv_Controller #(
 
     logic setup_issued;
     logic [4:0] data_request_count;
+    logic [2:0] write_drain_count;
 
     logic [CONFIG_WIDTH-1:0] input_channel_reg;
     logic [CONFIG_WIDTH-1:0] pool_x_reg;
@@ -97,45 +98,36 @@ module Conv_Controller #(
     logic MaxPool_en_reg;
     logic [CONFIG_WIDTH-1:0] image_width_reg;
     logic [CONFIG_WIDTH-1:0] image_height_reg;
+    logic [CONFIG_WIDTH-1:0] pool_x_last_reg;
+    logic [CONFIG_WIDTH-1:0] pool_y_last_reg;
     logic [CONFIG_WIDTH-1:0] input_channels_reg;
-    logic [CONFIG_WIDTH-1:0] output_channel_base_reg;
-    logic [ADDR_WIDTH-1:0] weight_base_addr_reg;
 
-    logic [ADDR_WIDTH-1:0] image_pixels;
     logic [ADDR_WIDTH-1:0] conv_width;
     logic [ADDR_WIDTH-1:0] conv_height;
-    logic [ADDR_WIDTH-1:0] conv_pixels;
-    logic [ADDR_WIDTH-1:0] tile_width;
-    logic [ADDR_WIDTH-1:0] tile_height;
-    logic [ADDR_WIDTH-1:0] pooled_pixels;
-    logic [ADDR_WIDTH-1:0] output_spatial_addr;
+    logic [ADDR_WIDTH-1:0] write_pixels_per_channel_reg;
+    logic [ADDR_WIDTH-1:0] write_group_base_addr;
+    logic [ADDR_WIDTH-1:0] write_channel_base_addr;
+    logic [ADDR_WIDTH-1:0] write_spatial_addr;
+    logic [ADDR_WIDTH-1:0] data_read_addr_reg;
+    logic [ADDR_WIDTH-1:0] data_read_row_step_reg;
+    logic [ADDR_WIDTH-1:0] data_read_plane_step_reg;
+    logic [ADDR_WIDTH-1:0] data_read_tile_row_step_reg;
     logic [CONFIG_WIDTH-1:0] pad_row_calc;
     logic [CONFIG_WIDTH-1:0] pad_col_calc;
+    logic [7:0] pad_tile_index_reg;
+    logic [7:0] pad_row_reg;
+    logic [7:0] pad_col_reg;
+    logic       data_read_prepared;
 
     assign input_channel_index = input_channel_reg;
     assign pool_x_index        = pool_x_reg;
     assign pool_y_index        = pool_y_reg;
 
     always_comb begin
-        image_pixels  = image_width_reg * image_height_reg;
         conv_width    = image_width_reg - 2;
         conv_height   = image_height_reg - 2;
-        conv_pixels   = conv_width * conv_height;
-        tile_width    = conv_width >> 1;
-        tile_height   = conv_height >> 1;
-        pooled_pixels = tile_width * tile_height;
         pad_row_calc  = (pool_y_reg << 1) + data_request_count[3:2];
         pad_col_calc  = (pool_x_reg << 1) + data_request_count[1:0];
-
-        if (MaxPool_en_reg) begin
-            output_spatial_addr =
-                pool_y_reg * tile_width + pool_x_reg;
-        end else begin
-            output_spatial_addr =
-                (pool_y_reg * 2 + result_output_position[1])
-                    * conv_width
-                + (pool_x_reg * 2 + result_output_position[0]);
-        end
     end
 
     always_comb begin
@@ -145,19 +137,13 @@ module Conv_Controller #(
         done = (state == DONE);
 
         weight_load_start = 1'b0;
-        weight_load_addr =
-            weight_base_addr_reg
-            + input_channel_reg * WEIGHT_PACKET_BYTES;
 
         data_read_enable = 1'b0;
         data_read_bank   = source_bank_reg;
-        pad_tile_index   = input_channel_reg[7:0];
-        pad_row          = pad_row_calc[7:0];
-        pad_col          = pad_col_calc[7:0];
-        data_read_addr   =
-            input_channel_reg * image_pixels
-            + (pad_row_calc * image_width_reg)
-            + pad_col_calc;
+        pad_tile_index   = pad_tile_index_reg;
+        pad_row          = pad_row_reg;
+        pad_col          = pad_col_reg;
+        data_read_addr   = data_read_addr_reg;
 
         shift_clear = 1'b0;
 
@@ -171,10 +157,7 @@ module Conv_Controller #(
 
         data_write_enable = 1'b0;
         data_write_bank   = !source_bank_reg;
-        data_write_addr   =
-            (output_channel_base_reg + result_output_channel)
-                * (MaxPool_en_reg ? pooled_pixels : conv_pixels)
-            + output_spatial_addr;
+        data_write_addr   = write_channel_base_addr + write_spatial_addr;
 
         case (state)
             IDLE: begin
@@ -191,9 +174,7 @@ module Conv_Controller #(
                 if (!setup_issued) begin
                     weight_load_start = 1'b1;
                     shift_clear       = 1'b1;
-                end else if (weight_valid
-                             && (data_request_count < 16)
-                             && shift_pixel_ready) begin
+                end else if (weight_valid && data_read_prepared) begin
                     data_read_enable = 1'b1;
                 end
             end
@@ -223,9 +204,56 @@ module Conv_Controller #(
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
+            data_read_addr_reg <= '0;
+            data_read_row_step_reg <= '0;
+            data_read_plane_step_reg <= '0;
+            data_read_tile_row_step_reg <= '0;
+            pad_tile_index_reg <= '0;
+            pad_row_reg <= '0;
+            pad_col_reg <= '0;
+            data_read_prepared <= 1'b0;
+        end else if (state == IDLE && start) begin
+            data_read_row_step_reg <= cfg_image_width - 3;
+            data_read_plane_step_reg <= cfg_image_width * cfg_image_height;
+            data_read_tile_row_step_reg <= cfg_image_width << 1;
+            data_read_prepared <= 1'b0;
+        end else if (!setup_issued) begin
+            data_read_prepared <= 1'b0;
+        end else begin
+            if (setup_issued && weight_valid
+                && (data_request_count < 16)
+                && shift_pixel_ready) begin
+                if (!data_read_prepared) begin
+                    pad_tile_index_reg <= input_channel_reg[7:0];
+                    pad_row_reg <= pad_row_calc[7:0];
+                    pad_col_reg <= pad_col_calc[7:0];
+                    data_read_prepared <= 1'b1;
+                end else if (data_read_enable && data_read_ready) begin
+                    data_read_prepared <= 1'b0;
+                end
+            end
+
+            if (!setup_issued && weight_load_start && weight_load_ready) begin
+                data_read_addr_reg <=
+                    input_channel_reg * data_read_plane_step_reg
+                    + (pool_y_reg * data_read_tile_row_step_reg)
+                    + (pool_x_reg << 1);
+            end else if (data_read_enable && data_read_ready) begin
+                if (data_request_count[1:0] == 2'd3)
+                    data_read_addr_reg <=
+                        data_read_addr_reg + data_read_row_step_reg;
+                else
+                    data_read_addr_reg <= data_read_addr_reg + 1'b1;
+            end
+        end
+    end
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
             state                   <= IDLE;
             setup_issued            <= 1'b0;
             data_request_count      <= 5'd0;
+            write_drain_count       <= 2'd0;
             input_channel_reg       <= '0;
             pool_x_reg              <= '0;
             pool_y_reg              <= '0;
@@ -233,9 +261,13 @@ module Conv_Controller #(
             MaxPool_en_reg          <= 1'b0;
             image_width_reg         <= '0;
             image_height_reg        <= '0;
+            pool_x_last_reg         <= '0;
+            pool_y_last_reg         <= '0;
             input_channels_reg      <= '0;
-            output_channel_base_reg <= '0;
-            weight_base_addr_reg    <= '0;
+            write_group_base_addr   <= '0;
+            write_channel_base_addr <= '0;
+            write_spatial_addr      <= '0;
+            write_pixels_per_channel_reg <= '0;
         end else begin
             case (state)
                 IDLE: begin
@@ -244,27 +276,36 @@ module Conv_Controller #(
                         MaxPool_en_reg          <= MaxPool_en;
                         image_width_reg         <= cfg_image_width;
                         image_height_reg        <= cfg_image_height;
+                        pool_x_last_reg         <=
+                            ((cfg_image_width - 2) >> 1) - 1'b1;
+                        pool_y_last_reg         <=
+                            ((cfg_image_height - 2) >> 1) - 1'b1;
                         input_channels_reg      <= cfg_input_channels;
-                        output_channel_base_reg <=
-                            cfg_output_channel_base;
-                        weight_base_addr_reg    <= weight_base_addr;
+                        write_group_base_addr   <= cfg_write_group_base_addr;
+                        write_channel_base_addr <= cfg_write_group_base_addr;
+                        write_pixels_per_channel_reg <=
+                            cfg_write_pixels_per_channel;
+                        write_spatial_addr      <= '0;
                         input_channel_reg       <= '0;
                         pool_x_reg              <= '0;
                         pool_y_reg              <= '0;
                         setup_issued            <= 1'b0;
                         data_request_count      <= 5'd0;
+                        write_drain_count       <= 2'd0;
                         state                   <= SET_WEIGHT_DATA;
                     end
                 end
 
                 SET_WEIGHT_DATA: begin
                     if (!setup_issued) begin
-                        if (weight_load_start && weight_load_ready)
+                        if (weight_load_start && weight_load_ready) begin
                             setup_issued <= 1'b1;
+                        end
                     end else begin
-                        if (data_read_enable && data_read_ready)
+                        if (data_read_enable && data_read_ready) begin
                             data_request_count <=
                                 data_request_count + 1'b1;
+                        end
 
                         if (shift_window_valid && shift_window_ready)
                             state <= CONV;
@@ -292,15 +333,51 @@ module Conv_Controller #(
                 end
 
                 PUSH_DATA: begin
-                    if (result_output_done) begin
-                        if ((pool_x_reg == tile_width-1)
-                            && (pool_y_reg == tile_height-1)) begin
-                            // The final Data Buffer write occurs on this
-                            // edge. Report completion during the following
-                            // DONE state instead of on the write edge.
-                            state <= DONE;
+                    if (data_write_enable) begin
+                        if (result_output_channel == NUM_CH-1) begin
+                            write_channel_base_addr <=
+                                write_group_base_addr;
+
+                            if (MaxPool_en_reg) begin
+                                write_spatial_addr <=
+                                    write_spatial_addr + 1'b1;
+                            end else begin
+                                case (result_output_position)
+                                    2'd0: write_spatial_addr <=
+                                        write_spatial_addr + 1'b1;
+                                    2'd1: write_spatial_addr <=
+                                        write_spatial_addr + conv_width - 1'b1;
+                                    2'd2: write_spatial_addr <=
+                                        write_spatial_addr + 1'b1;
+                                    default: begin
+                                        if (pool_x_reg == pool_x_last_reg) begin
+                                            write_spatial_addr <=
+                                                write_spatial_addr
+                                                + conv_width + 2;
+                                        end else begin
+                                            write_spatial_addr <=
+                                                write_spatial_addr + 2;
+                                        end
+                                    end
+                                endcase
+                            end
                         end else begin
-                            if (pool_x_reg == tile_width-1) begin
+                            write_channel_base_addr <=
+                                write_channel_base_addr
+                                + write_pixels_per_channel_reg;
+                        end
+                    end
+
+                    if (result_output_done) begin
+                        if ((pool_x_reg == pool_x_last_reg)
+                            && (pool_y_reg == pool_y_last_reg)) begin
+                            // The registered requantizer and conv write
+                            // command delay the final buffer write by five
+                            // cycles.
+                            write_drain_count <= 3'd5;
+                            state <= WRITE_DRAIN;
+                        end else begin
+                            if (pool_x_reg == pool_x_last_reg) begin
                                 pool_x_reg <= '0;
                                 pool_y_reg <= pool_y_reg + 1'b1;
                             end else begin
@@ -312,6 +389,14 @@ module Conv_Controller #(
                             data_request_count <= 5'd0;
                             state              <= SET_WEIGHT_DATA;
                         end
+                    end
+                end
+
+                WRITE_DRAIN: begin
+                    if (write_drain_count == 0) begin
+                        state <= DONE;
+                    end else begin
+                        write_drain_count <= write_drain_count - 1'b1;
                     end
                 end
 

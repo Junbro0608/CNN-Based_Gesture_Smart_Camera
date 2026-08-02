@@ -147,28 +147,10 @@ module rom #(
 
     (* ram_style = "block" *) logic [DATA_WIDTH-1:0] mem[0:DEPTH-1];
 
-    // write (초기화)
+    // Vivado initializes this inferred block RAM from the project-managed
+    // memory file. Keep the filename literal for synthesis compatibility.
     initial begin
-        integer fd;
-        string mem_path;
-
-        mem_path = "int8_weights_conv_fc_be64.mem";
-        fd = $fopen(mem_path, "r");
-        if (fd != 0) begin
-            $fclose(fd);
-            $readmemh(mem_path, mem);
-            $display("[ROM] loaded weights from %s", mem_path);
-        end else begin
-            mem_path = "D:/git_clone/CNN-Based_Gesture_Smart_Camera/Lab00_Dram_controller/Dram_controller/Dram_controller.srcs/sim_1/int8_weights_conv_fc_be64.mem";
-            fd = $fopen(mem_path, "r");
-            if (fd != 0) begin
-                $fclose(fd);
-                $readmemh(mem_path, mem);
-                $display("[ROM] loaded weights from %s", mem_path);
-            end else begin
-                $display("[ROM][WARN] cannot open weight memory file, keeping zeroes");
-            end
-        end
+        $readmemh("int8_weights_conv_fc_be64.mem", mem);
     end
 
     // read 

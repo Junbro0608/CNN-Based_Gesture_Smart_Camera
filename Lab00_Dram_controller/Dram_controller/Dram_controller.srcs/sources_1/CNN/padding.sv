@@ -7,6 +7,8 @@ module padding #(
     parameter IMG_DATA_WIDH = 8,
     parameter TILE_INDEX_WIDTH = 8  // 64x64 타일 인덱스 비트폭
 ) (
+    input logic clk,
+    input logic rst_n,
     input logic [7:0] padding_size,  // 원본 타일 크기: 128/64/32
     input logic img_MUX_sel,  // 1: img_mem 읽기, 0: data_mem 읽기
     input logic padding_en,  // 1: 패딩 좌표 모드
@@ -28,11 +30,20 @@ module padding #(
     logic [31:0] tile_base;
     logic [31:0] local_addr;
     logic inside_valid;
+    logic [$clog2(DATA_ADDR_WIDTH)-1:0] data_raddr_calc;
+    logic [$clog2(IMG_ADDR_WIDH*IMG_ADDR_WIDH)-1:0] img_raddr_calc;
+    logic padded_img_select_calc;
+    logic padded_data_valid_calc;
+    logic [$clog2(DATA_ADDR_WIDTH)-1:0] padded_data_raddr_reg;
+    logic [$clog2(IMG_ADDR_WIDH*IMG_ADDR_WIDH)-1:0] padded_img_raddr_reg;
+    logic padded_img_select_reg;
+    logic padded_data_valid_reg;
 
     always_comb begin
-        conv_rdata   = '0;
-        data_raddr   = '0;
-        img_raddr    = '0;
+        data_raddr_calc = '0;
+        img_raddr_calc  = '0;
+        padded_img_select_calc = 1'b0;
+        padded_data_valid_calc = 1'b0;
         size_n       = 128;
         pad_w        = 130;
         src_addr     = '0;
@@ -96,16 +107,42 @@ module padding #(
             src_addr = tile_base + local_addr;
 
             if (img_MUX_sel) begin
-                img_raddr  = src_addr[$clog2(IMG_ADDR_WIDH*IMG_ADDR_WIDH)-1:0];
-                conv_rdata = img_rdata[DATA_DATA_WIDTH-1:0];
+                img_raddr_calc =
+                    src_addr[$clog2(IMG_ADDR_WIDH*IMG_ADDR_WIDH)-1:0];
+                padded_img_select_calc = 1'b1;
             end else begin
-                data_raddr = src_addr[$clog2(DATA_ADDR_WIDTH)-1:0];
-                conv_rdata = data_rdata;
+                data_raddr_calc = src_addr[$clog2(DATA_ADDR_WIDTH)-1:0];
+                padded_data_valid_calc = 1'b1;
             end
         end
+    end
 
-        // Pool4/Pool5 have no padding coordinates. Forward the address from
-        // Standalone_MaxPool through the existing padding-to-buffer path.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            padded_data_raddr_reg <= '0;
+            padded_img_raddr_reg  <= '0;
+            padded_img_select_reg <= 1'b0;
+            padded_data_valid_reg <= 1'b0;
+        end else begin
+            padded_data_raddr_reg <= data_raddr_calc;
+            padded_img_raddr_reg  <= img_raddr_calc;
+            padded_img_select_reg <= padded_img_select_calc;
+            padded_data_valid_reg <= padded_data_valid_calc;
+        end
+    end
+
+    always_comb begin
+        data_raddr = padded_data_raddr_reg;
+        img_raddr  = padded_img_raddr_reg;
+        conv_rdata = '0;
+
+        if (padded_img_select_reg)
+            conv_rdata = img_rdata[DATA_DATA_WIDTH-1:0];
+        else if (padded_data_valid_reg)
+            conv_rdata = data_rdata;
+
+        // Pool4/Pool5 retain their original one-cycle direct data-buffer
+        // address path and do not use the padded-address register.
         if (direct_raddr_en) begin
             data_raddr = direct_raddr;
             conv_rdata = data_rdata;

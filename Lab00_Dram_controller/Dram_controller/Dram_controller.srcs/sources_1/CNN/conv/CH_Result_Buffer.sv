@@ -32,14 +32,16 @@ module CH_Result_Buffer #(
     output logic                          output_done
 );
 
-    typedef enum logic {
+    typedef enum logic [1:0] {
         CAPTURE_RESULTS,
+        PREPARE_OUTPUT,
         OUTPUT_RESULTS
     } state_t;
 
     state_t state;
 
     logic signed [DATA_WIDTH-1:0] conv_mem [0:3][0:NUM_CH-1];
+    logic signed [DATA_WIDTH-1:0] pool_max_mem [0:NUM_CH-1];
     logic [1:0] capture_position;
     logic [1:0] output_position_reg;
     logic [CH_INDEX_WIDTH-1:0] output_channel_reg;
@@ -50,9 +52,9 @@ module CH_Result_Buffer #(
     logic capture_fire;
     logic output_fire;
     logic signed [DATA_WIDTH-1:0] selected_data;
+    logic signed [DATA_WIDTH-1:0] output_data_reg;
 
     integer capture_ch;
-    integer compare_pos;
     integer reset_ch;
     integer reset_pos;
 
@@ -73,29 +75,17 @@ module CH_Result_Buffer #(
         && (output_channel_reg == NUM_CH-1)
         && (MaxPool_en_reg || (output_position_reg == 2'd3));
 
+    assign output_data = output_data_reg;
+
     // Select either one stored convolution result or the signed maximum of
     // all four results for the currently selected output channel.
     always_comb begin
         selected_data =
             conv_mem[output_position_reg][output_channel_reg];
 
-        if (MaxPool_en_reg) begin
-            selected_data = conv_mem[0][output_channel_reg];
+        if (MaxPool_en_reg)
+            selected_data = pool_max_mem[output_channel_reg];
 
-            for (compare_pos = 1; compare_pos < 4;
-                 compare_pos = compare_pos + 1) begin
-                if ($signed(conv_mem[compare_pos][output_channel_reg])
-                    > $signed(selected_data)) begin
-                    selected_data =
-                        conv_mem[compare_pos][output_channel_reg];
-                end
-            end
-        end
-
-        if (Relu_en_reg && selected_data[DATA_WIDTH-1])
-            output_data = {DATA_WIDTH{1'b0}};
-        else
-            output_data = selected_data;
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
@@ -106,12 +96,16 @@ module CH_Result_Buffer #(
             output_channel_reg <= '0;
             MaxPool_en_reg     <= 1'b0;
             Relu_en_reg        <= 1'b0;
+            output_data_reg    <= '0;
 
             for (reset_pos = 0; reset_pos < 4;
                  reset_pos = reset_pos + 1) begin
                 for (reset_ch = 0; reset_ch < NUM_CH;
-                     reset_ch = reset_ch + 1)
+                     reset_ch = reset_ch + 1) begin
                     conv_mem[reset_pos][reset_ch] <= '0;
+                    if (reset_pos == 0)
+                        pool_max_mem[reset_ch] <= '0;
+                end
             end
         end else if (clear) begin
             state               <= CAPTURE_RESULTS;
@@ -120,14 +114,23 @@ module CH_Result_Buffer #(
             output_channel_reg  <= '0;
             MaxPool_en_reg      <= MaxPool_en;
             Relu_en_reg         <= Relu_en;
+            output_data_reg     <= '0;
         end else begin
             case (state)
                 CAPTURE_RESULTS: begin
                     if (capture_fire) begin
                         for (capture_ch = 0; capture_ch < NUM_CH;
-                             capture_ch = capture_ch + 1)
+                             capture_ch = capture_ch + 1) begin
                             conv_mem[capture_position][capture_ch]
                                 <= conv_data[capture_ch];
+                            if (capture_position == 2'd0)
+                                pool_max_mem[capture_ch]
+                                    <= conv_data[capture_ch];
+                            else if ($signed(conv_data[capture_ch])
+                                     > $signed(pool_max_mem[capture_ch]))
+                                pool_max_mem[capture_ch]
+                                    <= conv_data[capture_ch];
+                        end
 
                         if (capture_position == 2'd0) begin
                             MaxPool_en_reg <= MaxPool_en;
@@ -138,11 +141,19 @@ module CH_Result_Buffer #(
                             capture_position    <= 2'd0;
                             output_position_reg <= 2'd0;
                             output_channel_reg  <= '0;
-                            state               <= OUTPUT_RESULTS;
+                            state               <= PREPARE_OUTPUT;
                         end else begin
                             capture_position <= capture_position + 1'b1;
                         end
                     end
+                end
+
+                PREPARE_OUTPUT: begin
+                    if (Relu_en_reg && selected_data[DATA_WIDTH-1])
+                        output_data_reg <= '0;
+                    else
+                        output_data_reg <= selected_data;
+                    state <= OUTPUT_RESULTS;
                 end
 
                 OUTPUT_RESULTS: begin
@@ -157,10 +168,12 @@ module CH_Result_Buffer #(
                             end else begin
                                 output_position_reg
                                     <= output_position_reg + 1'b1;
+                                state <= PREPARE_OUTPUT;
                             end
                         end else begin
                             output_channel_reg
                                 <= output_channel_reg + 1'b1;
+                            state <= PREPARE_OUTPUT;
                         end
                     end
                 end
@@ -174,5 +187,5 @@ module CH_Result_Buffer #(
             endcase
         end
     end
-
+    
 endmodule

@@ -8,7 +8,7 @@ module tb_CNN_accelerator_mem;
 	localparam int PERSON_COUNT = 2;
 	localparam int NONPERSON_COUNT = 2;
 	localparam int TOTAL_CASES = PERSON_COUNT + NONPERSON_COUNT;
-	localparam int TIMEOUT_CYCLES = 8000000;
+	localparam int TIMEOUT_CYCLES = 12000000;
 	localparam string MEM_BASE_DIR = "D:/git_clone/CNN-Based_Gesture_Smart_Camera/Lab00_Dram_controller/Dram_controller/Dram_controller.srcs/sim_1/test_img/mem_out";
 	localparam bit ENABLE_CONSOLE_LOG = 1'b1;
 	localparam bit ENABLE_FILE_LOG = 1'b0;

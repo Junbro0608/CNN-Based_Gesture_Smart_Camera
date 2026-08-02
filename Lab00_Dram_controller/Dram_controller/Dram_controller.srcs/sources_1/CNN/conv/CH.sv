@@ -30,6 +30,8 @@ module CH #(
     // CH → MaxPool
     output logic result_valid,
     input  logic result_ready
+    ,
+    output logic mac_tile_done
 );
 
     // --------------------------------------------------------
@@ -42,11 +44,36 @@ module CH #(
     // signed 8-bit Weight를 signed 9-bit로 부호 확장한 값
     logic signed [8:0] weight_signed[0:8];
 
-    // Pixel × Weight 결과
-    // signed 9-bit × signed 9-bit = signed 18-bit
-    logic signed [17:0] product[0:8];
+    // Stage 1 captures products, stage 2 captures pair sums, and stage 3
+    // finishes reduction before updating the spatial accumulator.
+    logic signed [17:0] product_calc[0:8];
+    logic signed [17:0] product_reg[0:8];
+    logic                stage1_valid;
+    logic                stage2_valid;
+    logic                stage3_valid;
+    logic                stage1_first_ic;
+    logic                stage1_last_ic;
+    logic [1:0]          stage1_window_index;
+    logic signed [31:0]  stage1_bias;
+    logic                stage2_first_ic;
+    logic                stage2_last_ic;
+    logic [1:0]          stage2_window_index;
+    logic signed [31:0]  stage2_bias;
+    logic                stage3_first_ic;
+    logic                stage3_last_ic;
+    logic [1:0]          stage3_window_index;
+    logic signed [31:0]  stage3_bias;
 
-    // 현재 입력 채널 하나의 3×3 합산 결과
+    logic signed [18:0] sum01_reg;
+    logic signed [18:0] sum23_reg;
+    logic signed [18:0] sum45_reg;
+    logic signed [18:0] sum67_reg;
+    logic signed [17:0] product8_reg;
+    logic signed [19:0] sum0123;
+    logic signed [19:0] sum4567;
+    logic signed [20:0] sum01234567;
+    logic signed [21:0] product_sum;
+    logic signed [21:0] product_sum_reg;
     logic signed [31:0] conv_sum;
 
     // Four independent spatial accumulators for the four convolution windows
@@ -69,6 +96,8 @@ module CH #(
 
     // Pixel, Weight, CH enable이 모두 유효할 때 1
     logic input_fire;
+    logic stage3_execute;
+    logic pipeline_stall;
 
     integer i;
     integer spatial;
@@ -77,15 +106,18 @@ module CH #(
     // 입력 유효 조건
     // --------------------------------------------------------
 
-    // Disabled channels do not block the shared Shift Buffer. On the final
-    // input channel, the one-entry result register must be available before
-    // another convolution window can be accepted.
+    // The three MAC stages accept a new window every cycle. They all stall
+    // only when a final-channel result cannot leave the one-entry result
+    // register.
+    assign pipeline_stall = stage3_valid && stage3_last_ic
+        && result_valid && !result_ready;
     assign pixel_ready =
         !ch_enable
-        || (weight_valid
-            && (!last_ic || !result_valid || result_ready));
+        || (weight_valid && !pipeline_stall);
 
     assign input_fire = ch_enable && pixel_valid && pixel_ready; // CH가 입력을 실제로 처리하는 조건 
+    assign stage3_execute = stage3_valid && !pipeline_stall;
+    assign mac_tile_done = stage3_execute && (stage3_window_index == 2'd3);
 
     /*
     ch_enable   = 1
@@ -101,8 +133,6 @@ module CH #(
 
     always_comb begin
         // 조합논리 기본값
-        conv_sum = 32'sd0;
-
         for (i = 0; i < 9; i = i + 1) begin
             // All feature and image inputs use signed int8 two's-complement
             // values. zero_extend_input remains for interface compatibility.
@@ -116,12 +146,14 @@ module CH #(
 
             // signed 9-bit × signed 9-bit
             // 결과는 signed 18-bit
-            product[i] = pixel_signed[i] * weight_signed[i];
-
-            // signed 18-bit Product를 signed 32-bit로
-            // 부호 확장한 뒤 conv_sum에 누적
-            conv_sum = conv_sum + $signed({{14{product[i][17]}}, product[i]});
+            product_calc[i] = pixel_signed[i] * weight_signed[i];
         end
+
+        sum0123     = sum01_reg + sum23_reg;
+        sum4567     = sum45_reg + sum67_reg;
+        sum01234567 = sum0123 + sum4567;
+        product_sum = sum01234567 + product8_reg;
+        conv_sum = {{10{product_sum_reg[21]}}, product_sum_reg};
     end
 
     // --------------------------------------------------------
@@ -140,9 +172,33 @@ module CH #(
             full_result  <= 32'sd0;
             result_out   <= 32'sd0;
             result_valid <= 1'b0;
+            stage1_valid <= 1'b0;
+            stage2_valid <= 1'b0;
+            stage3_valid <= 1'b0;
+            product_sum_reg <= 22'sd0;
+            stage1_first_ic <= 1'b0;
+            stage1_last_ic  <= 1'b0;
+            stage1_window_index <= 2'd0;
+            stage1_bias <= 32'sd0;
+            stage2_first_ic <= 1'b0;
+            stage2_last_ic  <= 1'b0;
+            stage2_window_index <= 2'd0;
+            stage2_bias <= 32'sd0;
+            stage3_first_ic <= 1'b0;
+            stage3_last_ic  <= 1'b0;
+            stage3_window_index <= 2'd0;
+            stage3_bias <= 32'sd0;
 
             for (spatial = 0; spatial < 4; spatial = spatial + 1)
             accumulator[spatial] <= 32'sd0;
+
+            for (spatial = 0; spatial < 9; spatial = spatial + 1)
+                product_reg[spatial] <= 18'sd0;
+            sum01_reg <= 19'sd0;
+            sum23_reg <= 19'sd0;
+            sum45_reg <= 19'sd0;
+            sum67_reg <= 19'sd0;
+            product8_reg <= 18'sd0;
 
         end else begin
             if (acc_clear) begin
@@ -153,6 +209,9 @@ module CH #(
                 full_result  <= 32'sd0;
                 result_out   <= 32'sd0;
                 result_valid <= 1'b0;
+                stage1_valid <= 1'b0;
+                stage2_valid <= 1'b0;
+                stage3_valid <= 1'b0;
 
                 for (spatial = 0; spatial < 4; spatial = spatial + 1)
                 accumulator[spatial] <= 32'sd0;
@@ -162,77 +221,59 @@ module CH #(
                 // applies backpressure.
                 if (result_valid && result_ready) result_valid <= 1'b0;
 
-                if (input_fire) begin
+                    if (!pipeline_stall) begin
+                        if (stage3_execute) begin
+                            if (stage3_first_ic && stage3_last_ic) begin
+                                full_result <= conv_sum + stage3_bias;
+                                result_out <= conv_sum + stage3_bias;
+                                result_valid <= 1'b1;
+                                accumulator[stage3_window_index] <= 32'sd0;
+                            end else if (stage3_first_ic) begin
+                                accumulator[stage3_window_index] <= conv_sum;
+                            end else if (stage3_last_ic) begin
+                                full_result <= accumulator[stage3_window_index]
+                                    + conv_sum + stage3_bias;
+                                result_out <= accumulator[stage3_window_index]
+                                    + conv_sum + stage3_bias;
+                                result_valid <= 1'b1;
+                                accumulator[stage3_window_index] <= 32'sd0;
+                            end else begin
+                                accumulator[stage3_window_index] <=
+                                    accumulator[stage3_window_index] + conv_sum;
+                            end
+                        end
 
-                    // ------------------------------------------------
-                    // 입력 채널이 하나인 경우
-                    //
-                    // 예: 1 → 32 Layer
-                    //
-                    // first_ic=1
-                    // last_ic=1
-                    // ------------------------------------------------
-                    if (first_ic && last_ic) begin
-                        // 현재 채널의 3×3 결과에 Bias를 더함
-                        full_result <= conv_sum + bias_in;
+                        stage3_valid <= stage2_valid;
+                        stage3_first_ic <= stage2_first_ic;
+                        stage3_last_ic <= stage2_last_ic;
+                        stage3_window_index <= stage2_window_index;
+                        stage3_bias <= stage2_bias;
+                        if (stage2_valid)
+                            product_sum_reg <= product_sum;
 
-                        result_out <= conv_sum + bias_in;
+                        stage2_valid <= stage1_valid;
+                        stage2_first_ic <= stage1_first_ic;
+                        stage2_last_ic <= stage1_last_ic;
+                        stage2_window_index <= stage1_window_index;
+                        stage2_bias <= stage1_bias;
+                        if (stage1_valid) begin
+                            sum01_reg <= product_reg[0] + product_reg[1];
+                            sum23_reg <= product_reg[2] + product_reg[3];
+                            sum45_reg <= product_reg[4] + product_reg[5];
+                            sum67_reg <= product_reg[6] + product_reg[7];
+                            product8_reg <= product_reg[8];
+                        end
 
-                        // 최종 출력이 완성됨
-                        result_valid <= 1'b1;
-
-                        // 다음 계산을 위해 누적값 초기화
-                        accumulator[window_index] <= 32'sd0;
-
-                        // ------------------------------------------------
-                        // 여러 입력 채널 중 첫 번째 채널
-                        //
-                        // first_ic=1
-                        // last_ic=0
-                        // ------------------------------------------------
-                    end else if (first_ic) begin
-                        // 이전 누적값을 사용하지 않고
-                        // 현재 conv_sum으로 새 누적 시작
-                        accumulator[window_index] <= conv_sum;
-
-                        // ------------------------------------------------
-                        // 여러 입력 채널 중 마지막 채널
-                        //
-                        // first_ic=0
-                        // last_ic=1
-                        // ------------------------------------------------
-                    end else if (last_ic) begin
-                        // 기존 누적값, 현재 conv_sum, Bias를 모두 더함
-                        full_result <=
-                        accumulator[window_index]
-                        + conv_sum
-                        + bias_in;
-
-                        result_out <=
-                        (
-                            accumulator[window_index]
-                            + conv_sum
-                            + bias_in
-                        );
-
-                        // 최종 출력이 완성됨
-                        result_valid <= 1'b1;
-
-                        // 다음 계산을 위해 누적값 초기화
-                        accumulator[window_index] <= 32'sd0;
-
-                        // ------------------------------------------------
-                        // 여러 입력 채널 중 중간 채널
-                        //
-                        // first_ic=0
-                        // last_ic=0
-                        // ------------------------------------------------
-                    end else begin
-                        // 기존 누적값에 현재 채널의 3×3 결과 추가
-                        accumulator[window_index] <=
-                        accumulator[window_index] + conv_sum;
+                        stage1_valid <= input_fire;
+                        if (input_fire) begin
+                            for (spatial = 0; spatial < 9; spatial = spatial + 1)
+                                product_reg[spatial] <= product_calc[spatial];
+                            stage1_first_ic <= first_ic;
+                            stage1_last_ic <= last_ic;
+                            stage1_window_index <= window_index;
+                            stage1_bias <= bias_in;
+                        end
                     end
-                end
             end
         end
     end

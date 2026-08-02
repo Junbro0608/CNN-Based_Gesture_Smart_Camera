@@ -31,6 +31,9 @@ module fc_controller #(
 
     output logic output_capture_en,
     output logic [2:0] output_read_lane_index,
+    output logic quant_acc_capture_en,
+    output logic quant_result_capture_en,
+    input  logic quant_result_valid,
 
     output logic result_capture_en
 );
@@ -53,9 +56,16 @@ module fc_controller #(
         S_IDLE,
         S_ACC_CLEAR,
         S_MAC,
+        S_MAC_DRAIN,
+        S_PRODUCT_DRAIN,
         S_CAPTURE,
+        S_BIAS_PREFETCH,
         S_BIAS_ADD,
+        S_QUANT_CAPTURE,
+        S_QUANTIZE,
+        S_QUANT_WAIT,
         S_QUANT_ISSUE,
+        S_QUANT_DRAIN,
         S_NEXT_GROUP,
         S_FINAL_RESULT,
         S_DONE
@@ -70,6 +80,7 @@ module fc_controller #(
 
     logic   [                   1:0] bias_word_index;
     logic   [ INPUT_INDEX_WIDTH-1:0] input_index;
+    (* max_fanout = 1 *)
     logic   [      WT_ADDR_BITS-1:0] weight_read_offset;
     logic   [OUTPUT_INDEX_WIDTH-1:0] current_group_output_start;
     logic   [                   2:0] quant_lane_index;
@@ -81,6 +92,7 @@ module fc_controller #(
     logic   [OUTPUT_ARITH_WIDTH-1:0] quant_lane_index_extended;
     logic   [OUTPUT_ARITH_WIDTH-1:0] current_output_index_extended;
     logic   [OUTPUT_ARITH_WIDTH-1:0] next_group_output_start_extended;
+    logic   [                   1:0] bias_last_word_index;
 
     // Data memory 주소 폭에 맞춰 input index를 명시적으로 확장한다.
     assign input_index_data = {{(DATA_ADDR_BITS - INPUT_INDEX_WIDTH) {1'b0}}, input_index};
@@ -120,6 +132,10 @@ module fc_controller #(
                 case (current_state)
                     S_ACC_CLEAR: begin
                         input_index <= {INPUT_INDEX_WIDTH{1'b0}};
+                        // Address zero is issued during S_ACC_CLEAR; keep
+                        // the register on the next request address for S_MAC.
+                        weight_read_offset <=
+                            weight_read_offset + WEIGHT_ADDRESS_ONE;
                     end
 
                     S_MAC: begin
@@ -134,15 +150,22 @@ module fc_controller #(
                     S_CAPTURE: begin
                         bias_word_index  <= 2'd0;
                         quant_lane_index <= 3'd0;
+                        // Restore the bias-zero address after the final MAC
+                        // prefetch advanced the sequential request register.
+                        weight_read_offset <=
+                            weight_read_offset - WEIGHT_ADDRESS_ONE;
+                    end
+
+                    S_BIAS_PREFETCH: begin
+                        // Issue bias word zero, then advance so S_BIAS_ADD
+                        // can consume it while requesting the next word.
+                        weight_read_offset <=
+                            weight_read_offset + WEIGHT_ADDRESS_ONE;
                     end
 
                     S_BIAS_ADD: begin
                         if (bias_word_index != 2'd3) begin
                             bias_word_index <= bias_word_index + 2'd1;
-                            weight_read_offset <= weight_read_offset + WEIGHT_ADDRESS_ONE;
-                        end else if (next_group_output_start_extended <=
-                                     latched_output_length_extended) begin
-                            // 다음 output group이 있으면 다음 첫 Weight 주소로 이동한다.
                             weight_read_offset <= weight_read_offset + WEIGHT_ADDRESS_ONE;
                         end
                     end
@@ -187,6 +210,8 @@ module fc_controller #(
         lane_valid = 8'b00000000;
         output_capture_en = 1'b0;
         output_read_lane_index = 3'd0;
+        quant_acc_capture_en = 1'b0;
+        quant_result_capture_en = 1'b0;
         result_capture_en = 1'b0;
 
         // 각 lane의 전체 output index를 넓은 폭에서 직접 비교한다.
@@ -198,6 +223,17 @@ module fc_controller #(
         lane_valid[5] = (current_group_output_start_extended + {{(OUTPUT_ARITH_WIDTH-3){1'b0}}, 3'd5}) <= latched_output_length_extended;
         lane_valid[6] = (current_group_output_start_extended + {{(OUTPUT_ARITH_WIDTH-3){1'b0}}, 3'd6}) <= latched_output_length_extended;
         lane_valid[7] = (current_group_output_start_extended + {{(OUTPUT_ARITH_WIDTH-3){1'b0}}, 3'd7}) <= latched_output_length_extended;
+
+        // One 64-bit bias word holds two output-lane biases. The final FC2
+        // group has only lane 0, so it must consume only the first word.
+        if (lane_valid[7] || lane_valid[6])
+            bias_last_word_index = 2'd3;
+        else if (lane_valid[5] || lane_valid[4])
+            bias_last_word_index = 2'd2;
+        else if (lane_valid[3] || lane_valid[2])
+            bias_last_word_index = 2'd1;
+        else
+            bias_last_word_index = 2'd0;
 
         case (current_state)
             S_IDLE: begin
@@ -226,18 +262,34 @@ module fc_controller #(
                 // Synchronous memory prefetch: current MAC uses previous cycle
                 // read data while this cycle issues the next address.
                 core_data_read_offset = input_index_data + DATA_ADDRESS_ONE;
-                core_weight_read_offset = weight_read_offset + WEIGHT_ADDRESS_ONE;
+                core_weight_read_offset = weight_read_offset;
                 pe_mac_enable = 1'b1;
 
                 if (input_index == latched_input_length) begin
-                    // 마지막 MAC edge 다음 cycle에 accumulator를 capture한다.
-                    next_state = S_CAPTURE;
+                    // The FC core registers each memory operand before its
+                    // MAC. Drain the final registered operand first.
+                    next_state = S_MAC_DRAIN;
                 end
+            end
+
+            S_MAC_DRAIN: begin
+                // No new memory request. The final registered operand is
+                // captured into each PE's product pipeline on this edge.
+                next_state = S_PRODUCT_DRAIN;
+            end
+
+            S_PRODUCT_DRAIN: begin
+                // The final registered product is added to each accumulator
+                // on this edge before the output buffer captures it.
+                next_state = S_CAPTURE;
             end
 
             S_CAPTURE: begin
                 output_capture_en = 1'b1;
-                // 마지막 MAC 결과를 먼저 저장한 뒤 다음 cycle부터 Bias를 더한다.
+                next_state = S_BIAS_PREFETCH;
+            end
+
+            S_BIAS_PREFETCH: begin
                 next_state = S_BIAS_ADD;
             end
 
@@ -247,39 +299,68 @@ module fc_controller #(
                 output_bias_word_index = bias_word_index;
                 // 현재 cycle은 이전 cycle에 요청한 Bias word를 소비하고,
                 // 동시에 다음 Bias word 주소를 prefetch한다.
-                core_weight_read_offset = weight_read_offset + WEIGHT_ADDRESS_ONE;
+                core_weight_read_offset = weight_read_offset;
 
-                if (bias_word_index == 2'd3) begin
-                    // 네 번째 Bias add edge 이후에만 quantize/final 경로로 이동한다.
+                if (bias_word_index == bias_last_word_index) begin
+                    // Consume only the stored bias words for valid lanes.
                     if (latched_finish_en) begin
                         next_state = S_FINAL_RESULT;
                     end else begin
-                        next_state = S_QUANT_ISSUE;
+                        next_state = S_QUANT_CAPTURE;
                     end
                 end
             end
 
-            S_QUANT_ISSUE: begin
+            S_QUANT_CAPTURE: begin
                 output_read_lane_index = quant_lane_index;
+                quant_acc_capture_en = 1'b1;
+                next_state = S_QUANTIZE;
+            end
+
+            S_QUANTIZE: begin
+                next_state = S_QUANT_WAIT;
+            end
+
+            S_QUANT_WAIT: begin
+                if (quant_result_valid) begin
+                    quant_result_capture_en = 1'b1;
+                    next_state = S_QUANT_ISSUE;
+                end
+            end
+
+            S_QUANT_ISSUE: begin
                 core_data_write_offset =
                     current_output_index_extended[DATA_ADDR_BITS-1:0];
 
                 if (lane_valid[quant_lane_index]) begin
-                    // requantize is combinational, so write the selected lane
-                    // directly without a request/response handshake.
                     core_data_write_en = 1'b1;
 
                     if (current_output_index_extended ==
                         latched_output_length_extended) begin
-                        next_state = S_DONE;
+                        // The FC core registers this command, so keep one
+                        // drain cycle before reporting completion.
+                        next_state = S_QUANT_DRAIN;
                     end else if (quant_lane_index == 3'd7) begin
-                        next_state = S_NEXT_GROUP;
+                        next_state = S_QUANT_DRAIN;
                     end else begin
-                        next_state = S_QUANT_ISSUE;
+                        // Every lane needs its own selected accumulator and
+                        // requantized-byte capture sequence.
+                        next_state = S_QUANT_CAPTURE;
                     end
                 end else begin
                     // 유효 lane은 낮은 번호부터 연속이므로 정상 경로에는 도달하지 않는다.
                     next_state = S_DONE;
+                end
+            end
+
+            S_QUANT_DRAIN: begin
+                // Allow the final registered FC write command to reach the
+                // synchronous Data Buffer on this edge.
+                if (current_output_index_extended ==
+                    latched_output_length_extended) begin
+                    next_state = S_DONE;
+                end else begin
+                    next_state = S_NEXT_GROUP;
                 end
             end
 

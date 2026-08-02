@@ -53,8 +53,10 @@ module CNN_accelerator #(
     // padding control
     logic        [                        7:0] padding_size;
     logic                                      padding_en;
+    logic                                      padding_en_reg;
     logic                                      img_MUX_sel;
     logic        [$clog2(DATA_ADDR_WIDTH)-1:0] padding_DATA_raddr;
+    logic        [$clog2(DATA_ADDR_WIDTH)-1:0] padding_img_raddr;
     logic        [                        7:0] conv_tile_index;
     logic        [                        7:0] conv_pad_row;
     logic        [                        7:0] conv_pad_col;
@@ -69,6 +71,8 @@ module CNN_accelerator #(
     logic        [$clog2(DATA_ADDR_WIDTH)-1:0] mux_wAddr;
     logic signed [        DATA_DATA_WIDTH-1:0] mux_wData;
     logic signed [        DATA_DATA_WIDTH-1:0] DATA_rData;
+    logic        [$clog2(DATA_ADDR_WIDTH)-1:0] padding_raddr_reg;
+    logic        [$clog2(DATA_ADDR_WIDTH)-1:0] conv_data_raddr;
     logic                                      clk;
 
     assign clk = sysclk;
@@ -186,10 +190,12 @@ module CNN_accelerator #(
         .IMG_DATA_WIDH(IMG_DATA_WIDH),
         .TILE_INDEX_WIDTH(8)
     ) U_padding (
+        .clk         (clk),
+        .rst_n       (rst_n),
         .padding_size(padding_size),        // 패딩 전 사이즈: 128/64/32
         .img_MUX_sel (img_MUX_sel),
-        .padding_en  (padding_en),
-        .direct_raddr_en(!padding_en && !CONVFC_mux_sel),
+        .padding_en  (padding_en_reg),
+        .direct_raddr_en(!padding_en_reg && !CONVFC_mux_sel),
         .direct_raddr(conv_DATA_raddr),
         //conv 좌표 io
         .tile_index  (conv_tile_index),
@@ -200,15 +206,32 @@ module CNN_accelerator #(
         .data_raddr  (padding_DATA_raddr),
         .data_rdata  (DATA_rData),
         //img_mem
-        .img_raddr   (img_raddr),
+        .img_raddr   (padding_img_raddr),
         .img_rdata   (img_rdata)
     );
+
+    // The registered padding address and this top-level address register give
+    // Conv requests a three-cycle return latency. Pool4/5
+    // direct reads and FC reads retain their original one-cycle latency.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            padding_raddr_reg <= '0;
+            padding_en_reg <= 1'b0;
+        end else begin
+            padding_raddr_reg <= padding_DATA_raddr;
+            padding_en_reg <= padding_en;
+        end
+    end
+
+    assign conv_data_raddr = padding_en_reg
+        ? padding_raddr_reg : padding_DATA_raddr;
+    assign img_raddr = padding_img_raddr;
 
     // Data Buffer Raddr
     mux2 #(
         .WIDTH($clog2(DATA_ADDR_WIDTH))
     ) U_raddr2WTBuf_MUX (
-        .in0(padding_DATA_raddr),
+        .in0(conv_data_raddr),
         .in1(fc_DATA_raddr),
         .sel(CONVFC_mux_sel),
         .out(mux_raddr)

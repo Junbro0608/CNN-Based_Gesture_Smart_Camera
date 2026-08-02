@@ -48,12 +48,18 @@ module CNN_acc_controller #(
     } state_t;
 
     state_t state, next_state;
+    logic memory_owner_fc;
+
+    assign CONVFC_MUX_sel = memory_owner_fc;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             state <= IDLE;
+            memory_owner_fc <= 1'b0;
         end else begin
             state <= next_state;
+            memory_owner_fc <= (next_state == FC_1)
+                || (next_state == FC_2);
         end
     end
 
@@ -102,9 +108,6 @@ module CNN_acc_controller #(
         cnn_Done_clr     = 0;
         fc_Done_clr      = 0;
 
-        //FC가 메모리 점유 MUX 스위칭
-        if (state == FC_1 || state == FC_2) CONVFC_MUX_sel = 1;  //FC가 사용
-        else CONVFC_MUX_sel = 0;  //CONV가 사용
         //이미지 데이터 사용 MUX 스위칭
         if (state == CONV_1) img_MUX_sel = 1;  // img 사용
         else img_MUX_sel = 0;  //내부 메모리 사용

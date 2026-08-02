@@ -39,8 +39,10 @@ module Standalone_MaxPool #(
 
     typedef enum logic [2:0] {
         IDLE,
+        PREPARE_READ,
         ISSUE_READ,
         CAPTURE_READ,
+        UPDATE_MAX,
         WRITE_RESULT,
         DONE
     } state_t;
@@ -49,47 +51,43 @@ module Standalone_MaxPool #(
 
     logic source_bank_reg;
     logic [CONFIG_WIDTH-1:0] input_width_reg;
-    logic [CONFIG_WIDTH-1:0] input_height_reg;
     logic [CONFIG_WIDTH-1:0] channel_count_reg;
 
-    logic [CONFIG_WIDTH-1:0] output_width;
-    logic [CONFIG_WIDTH-1:0] output_height;
-    logic [ADDR_WIDTH-1:0] input_pixels;
-    logic [ADDR_WIDTH-1:0] output_pixels;
+    logic [CONFIG_WIDTH-1:0] output_width_reg;
+    logic [CONFIG_WIDTH-1:0] output_height_reg;
+    logic [ADDR_WIDTH-1:0] input_pixels_reg;
 
     logic [CONFIG_WIDTH-1:0] channel_reg;
     logic [CONFIG_WIDTH-1:0] output_x_reg;
     logic [CONFIG_WIDTH-1:0] output_y_reg;
     logic [1:0] pixel_index;
+    logic [1:0] next_pixel_index;
 
     logic signed [DATA_WIDTH-1:0] max_reg;
+    logic signed [DATA_WIDTH-1:0] sample_reg;
+    logic [ADDR_WIDTH-1:0] read_addr_reg;
+    logic [ADDR_WIDTH-1:0] read_channel_base_addr_reg;
+    logic [ADDR_WIDTH-1:0] write_addr_reg;
 
     always_comb begin
-        input_pixels  = input_width_reg * input_height_reg;
-        output_width  = input_width_reg / 2;
-        output_height = input_height_reg / 2;
-        output_pixels = output_width * output_height;
+        next_pixel_index = pixel_index + 1'b1;
 
         // pixel_index order:
         //   0: top-left, 1: top-right,
         //   2: bottom-left, 3: bottom-right.
-        rAddr =
-            channel_reg * input_pixels
-            + (output_y_reg * 2 + pixel_index[1]) * input_width_reg
-            + (output_x_reg * 2 + pixel_index[0]);
+        rAddr = read_addr_reg;
 
-        wAddr =
-            channel_reg * output_pixels
-            + output_y_reg * output_width
-            + output_x_reg;
+        wAddr = write_addr_reg;
 
         // pingpongBuffer reads r_sel=~w_sel.
         w_sel = !source_bank_reg;
         wData = max_reg;
         we    = (state == WRITE_RESULT);
 
-        busy = (state == ISSUE_READ)
+        busy = (state == PREPARE_READ)
+            || (state == ISSUE_READ)
             || (state == CAPTURE_READ)
+            || (state == UPDATE_MAX)
             || (state == WRITE_RESULT);
         done = (state == DONE);
     end
@@ -99,26 +97,36 @@ module Standalone_MaxPool #(
             state              <= IDLE;
             source_bank_reg    <= 1'b0;
             input_width_reg    <= '0;
-            input_height_reg   <= '0;
             channel_count_reg  <= '0;
+            output_width_reg   <= '0;
+            output_height_reg  <= '0;
+            input_pixels_reg   <= '0;
             channel_reg        <= '0;
             output_x_reg       <= '0;
             output_y_reg       <= '0;
             pixel_index        <= 2'd0;
             max_reg            <= '0;
+            sample_reg         <= '0;
+            read_addr_reg      <= '0;
+            read_channel_base_addr_reg <= '0;
+            write_addr_reg     <= '0;
         end else begin
             case (state)
                 IDLE: begin
                     if (start) begin
                         source_bank_reg   <= source_bank;
                         input_width_reg   <= input_width;
-                        input_height_reg  <= input_height;
                         channel_count_reg <= channel_count;
+                        output_width_reg  <= input_width >> 1;
+                        output_height_reg <= input_height >> 1;
+                        input_pixels_reg  <= input_width * input_height;
                         channel_reg       <= '0;
                         output_x_reg      <= '0;
                         output_y_reg      <= '0;
                         pixel_index       <= 2'd0;
                         max_reg           <= '0;
+                        sample_reg        <= '0;
+                        read_channel_base_addr_reg <= '0;
 
                         // Pool4 and Pool5 always use positive, even
                         // dimensions. Invalid configurations complete
@@ -130,8 +138,16 @@ module Standalone_MaxPool #(
                             || (channel_count == 0))
                             state <= DONE;
                         else
-                            state <= ISSUE_READ;
+                            state <= PREPARE_READ;
                     end
+                end
+
+                PREPARE_READ: begin
+                    read_addr_reg <=
+                        read_channel_base_addr_reg
+                        + ((output_y_reg << 1) * input_width_reg)
+                        + (output_x_reg << 1);
+                    state <= ISSUE_READ;
                 end
 
                 ISSUE_READ: begin
@@ -142,11 +158,17 @@ module Standalone_MaxPool #(
 
                 CAPTURE_READ: begin
                     // rData now corresponds to the address issued in the
-                    // preceding ISSUE_READ cycle.
+                    // preceding ISSUE_READ cycle. Register it before the
+                    // signed compare so BRAM output does not drive max_reg.
+                    sample_reg <= rData;
+                    state      <= UPDATE_MAX;
+                end
+
+                UPDATE_MAX: begin
                     if (pixel_index == 2'd0) begin
-                        max_reg <= rData;
-                    end else if ($signed(rData) > $signed(max_reg)) begin
-                        max_reg <= rData;
+                        max_reg <= sample_reg;
+                    end else if ($signed(sample_reg) > $signed(max_reg)) begin
+                        max_reg <= sample_reg;
                     end
 
                     if (pixel_index == 2'd3) begin
@@ -154,6 +176,11 @@ module Standalone_MaxPool #(
                         state       <= WRITE_RESULT;
                     end else begin
                         pixel_index <= pixel_index + 1'b1;
+                        read_addr_reg <=
+                            read_channel_base_addr_reg
+                            + ((output_y_reg << 1) + next_pixel_index[1])
+                                * input_width_reg
+                            + ((output_x_reg << 1) + next_pixel_index[0]);
                         state       <= ISSUE_READ;
                     end
                 end
@@ -162,23 +189,29 @@ module Standalone_MaxPool #(
                     // The external synchronous buffer accepts wData on this
                     // edge because we is high throughout WRITE_RESULT.
                     if ((channel_reg == channel_count_reg-1)
-                        && (output_x_reg == output_width-1)
-                        && (output_y_reg == output_height-1)) begin
+                        && (output_x_reg == output_width_reg-1)
+                        && (output_y_reg == output_height_reg-1)) begin
                         state <= DONE;
                     end else begin
-                        if (output_x_reg == output_width-1) begin
+                        // Output addresses are channel-major and contiguous,
+                        // so every non-final pooled write advances by one.
+                        write_addr_reg <= write_addr_reg + 1'b1;
+
+                        if (output_x_reg == output_width_reg-1) begin
                             output_x_reg <= '0;
 
-                            if (output_y_reg == output_height-1) begin
+                            if (output_y_reg == output_height_reg-1) begin
                                 output_y_reg <= '0;
                                 channel_reg  <= channel_reg + 1'b1;
+                                read_channel_base_addr_reg <=
+                                    read_channel_base_addr_reg + input_pixels_reg;
                             end else begin
                                 output_y_reg <= output_y_reg + 1'b1;
                             end
                         end else begin
                             output_x_reg <= output_x_reg + 1'b1;
                         end
-                        state <= ISSUE_READ;
+                        state <= PREPARE_READ;
                     end
                 end
 

@@ -15,6 +15,8 @@ module fc_pe (
     logic signed [8:0]  activation_s9;
     logic signed [16:0] product_s17;
     logic signed [31:0] product_s32;
+    logic signed [31:0] product_reg;
+    logic               product_valid_reg;
 
     // signed int8 activation의 부호를 유지하도록 signed 9-bit로 확장한다.
     assign activation_s9 = $signed({activation_u8[7], activation_u8});
@@ -26,13 +28,21 @@ module fc_pe (
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             accumulator_s32 <= 32'sd0;
+            product_reg     <= 32'sd0;
+            product_valid_reg <= 1'b0;
         end
-        else if (bias_load) begin
-            // bias load는 같은 클럭의 MAC 요청보다 우선한다.
-            accumulator_s32 <= bias_s32;
-        end
-        else if (mac_valid && lane_valid) begin
-            accumulator_s32 <= accumulator_s32 + product_s32;
+        else begin
+            product_valid_reg <= mac_valid && lane_valid;
+            if (mac_valid && lane_valid)
+                product_reg <= product_s32;
+
+            if (bias_load) begin
+                // bias load는 같은 클럭의 MAC 요청보다 우선한다.
+                accumulator_s32 <= bias_s32;
+            end
+            else if (product_valid_reg) begin
+                accumulator_s32 <= accumulator_s32 + product_reg;
+            end
         end
     end
 

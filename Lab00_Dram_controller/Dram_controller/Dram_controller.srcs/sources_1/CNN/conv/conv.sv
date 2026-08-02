@@ -103,11 +103,48 @@ module conv #(
         LAYER2_MAXPOOL_EN
             ? (LAYER2_OUTPUT_HEIGHT/2) : LAYER2_OUTPUT_HEIGHT;
 
+    localparam integer LAYER0_WRITE_PIXELS =
+        LAYER0_MAXPOOL_EN
+            ? (LAYER1_OUTPUT_WIDTH * LAYER1_OUTPUT_HEIGHT)
+            : (INPUT_WIDTH * INPUT_HEIGHT);
+    localparam integer LAYER1_WRITE_PIXELS =
+        LAYER1_MAXPOOL_EN
+            ? (LAYER2_OUTPUT_WIDTH * LAYER2_OUTPUT_HEIGHT)
+            : (LAYER1_OUTPUT_WIDTH * LAYER1_OUTPUT_HEIGHT);
+    localparam integer LAYER2_WRITE_PIXELS =
+        LAYER2_MAXPOOL_EN
+            ? (LAYER3_OUTPUT_WIDTH * LAYER3_OUTPUT_HEIGHT)
+            : (LAYER2_OUTPUT_WIDTH * LAYER2_OUTPUT_HEIGHT);
+    localparam integer LAYER0_WRITE_GROUP_STRIDE =
+        NUM_CH * LAYER0_WRITE_PIXELS;
+    localparam integer LAYER1_WRITE_GROUP_STRIDE =
+        NUM_CH * LAYER1_WRITE_PIXELS;
+    localparam integer LAYER2_WRITE_GROUP_STRIDE =
+        NUM_CH * LAYER2_WRITE_PIXELS;
+    localparam integer LAYER0_WEIGHT_GROUP_STRIDE = (1 * 9) + (NUM_CH / 2);
+    localparam integer LAYER1_WEIGHT_GROUP_STRIDE =
+        (LAYER0_OUTPUT_CHANNELS * 9) + (NUM_CH / 2);
+    localparam integer LAYER2_WEIGHT_GROUP_STRIDE =
+        (LAYER1_OUTPUT_CHANNELS * 9) + (NUM_CH / 2);
+    localparam logic LAYER0_WRITE_GROUP_STRIDE_IS_POWER_OF_TWO =
+        (LAYER0_WRITE_GROUP_STRIDE > 0)
+        && ((LAYER0_WRITE_GROUP_STRIDE
+             & (LAYER0_WRITE_GROUP_STRIDE - 1)) == 0);
+    localparam logic LAYER1_WRITE_GROUP_STRIDE_IS_POWER_OF_TWO =
+        (LAYER1_WRITE_GROUP_STRIDE > 0)
+        && ((LAYER1_WRITE_GROUP_STRIDE
+             & (LAYER1_WRITE_GROUP_STRIDE - 1)) == 0);
+    localparam logic LAYER2_WRITE_GROUP_STRIDE_IS_POWER_OF_TWO =
+        (LAYER2_WRITE_GROUP_STRIDE > 0)
+        && ((LAYER2_WRITE_GROUP_STRIDE
+             & (LAYER2_WRITE_GROUP_STRIDE - 1)) == 0);
+
     localparam integer CH_SELECT_WIDTH =
         (NUM_CH <= 1) ? 1 : $clog2(NUM_CH);
     localparam integer CONFIG_WIDTH = 16;
     typedef enum logic [3:0] {
         CNN_IDLE,
+        PREPARE_GROUP,
         START_GROUP,
         RUN_GROUP,
         STAGE_DONE,
@@ -146,6 +183,26 @@ module conv #(
     logic conv_w_sel;
     logic [DATA_ADDR_WIDTH-1:0] conv_wAddr;
     logic signed [BUFFER_DATA_WIDTH-1:0] conv_wData;
+    logic conv_write_we_reg;
+    logic conv_write_bank_reg;
+    logic [DATA_ADDR_WIDTH-1:0] conv_write_addr_reg;
+    logic signed [BUFFER_DATA_WIDTH-1:0] conv_write_data_reg;
+    logic conv_quant_valid;
+    logic conv_meta_valid_stage1;
+    logic conv_meta_valid_stage2;
+    logic conv_meta_valid_stage3;
+    logic conv_meta_valid_stage4;
+    logic conv_meta_valid_stage5;
+    logic conv_meta_bank_stage1;
+    logic conv_meta_bank_stage2;
+    logic conv_meta_bank_stage3;
+    logic conv_meta_bank_stage4;
+    logic conv_meta_bank_stage5;
+    logic [DATA_ADDR_WIDTH-1:0] conv_meta_addr_stage1;
+    logic [DATA_ADDR_WIDTH-1:0] conv_meta_addr_stage2;
+    logic [DATA_ADDR_WIDTH-1:0] conv_meta_addr_stage3;
+    logic [DATA_ADDR_WIDTH-1:0] conv_meta_addr_stage4;
+    logic [DATA_ADDR_WIDTH-1:0] conv_meta_addr_stage5;
 
     // Standalone MaxPool side of Feature_Buffer_Mux.
     logic [DATA_ADDR_WIDTH-1:0] pool_rAddr;
@@ -164,17 +221,23 @@ module conv #(
     logic [CONFIG_WIDTH-1:0] cfg_image_width;
     logic [CONFIG_WIDTH-1:0] cfg_image_height;
     logic [CONFIG_WIDTH-1:0] cfg_input_channels;
-    logic [CONFIG_WIDTH-1:0] cfg_output_channels;
     logic [CONFIG_WIDTH-1:0] cfg_output_groups;
-    logic [CONFIG_WIDTH-1:0] cfg_output_channel_base;
     logic cfg_MaxPool_en;
     logic cfg_Relu_en;
-    logic [WEIGHT_ADDR_WIDTH-1:0] cfg_layer_weight_base;
-    logic [DATA_ADDR_WIDTH-1:0] cfg_group_weight_base;
+
+    logic                    active_cfg_source_bank;
+    logic [CONFIG_WIDTH-1:0] active_cfg_image_width;
+    logic [CONFIG_WIDTH-1:0] active_cfg_image_height;
+    logic [CONFIG_WIDTH-1:0] active_cfg_input_channels;
+    logic [CONFIG_WIDTH-1:0] active_cfg_output_groups;
+    logic                    active_cfg_MaxPool_en;
+    logic                    active_cfg_Relu_en;
+    logic [DATA_ADDR_WIDTH-1:0] active_cfg_write_pixels_per_channel;
+    logic [DATA_ADDR_WIDTH-1:0] active_cfg_write_group_base_addr;
+    logic [WEIGHT_ADDR_WIDTH-1:0] active_cfg_weight_group_base_addr;
 
     // Conv_Controller ↔ external Weight Buffer register bridge.
     logic controller_weight_load_start;
-    logic [DATA_ADDR_WIDTH-1:0] controller_weight_load_addr;
     logic weight_load_ready;
     logic weight_valid;
     logic signed [7:0] weight_reg [0:NUM_CH-1][0:8];
@@ -191,6 +254,8 @@ module conv #(
     logic data_read_req_fire;
     logic data_read_fire;
     logic data_read_pending;
+    logic data_read_pending_d;
+    logic data_read_pending_d2;
     logic signed [7:0] data_reg;
     logic data_reg_valid;
 
@@ -266,16 +331,63 @@ module conv #(
     // returns data at cycle N+1.
     assign data_read_req_fire =
         controller_data_read_enable && data_read_ready;
-    assign data_read_fire = data_read_pending;
+    assign data_read_fire = data_read_pending_d2;
     assign conv_rAddr = controller_data_read_addr;
     assign tile_index = controller_pad_tile_index;
     assign pad_row    = controller_pad_row;
     assign pad_col    = controller_pad_col;
 
-    assign conv_we    = controller_data_write_enable;
-    assign conv_w_sel = controller_data_write_bank;
-    assign conv_wAddr = controller_data_write_addr;
-    assign conv_wData = conv_wdata_quantized;
+    // Pipeline the complete write command so layer configuration, result
+    // selection, and requantization do not directly drive the feature BRAM.
+    assign conv_we    = conv_write_we_reg;
+    assign conv_w_sel = conv_write_bank_reg;
+    assign conv_wAddr = conv_write_addr_reg;
+    assign conv_wData = conv_write_data_reg;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            conv_write_we_reg   <= 1'b0;
+            conv_write_bank_reg <= 1'b0;
+            conv_write_addr_reg <= '0;
+            conv_write_data_reg <= '0;
+            conv_meta_valid_stage1 <= 1'b0;
+            conv_meta_valid_stage2 <= 1'b0;
+            conv_meta_valid_stage3 <= 1'b0;
+            conv_meta_valid_stage4 <= 1'b0;
+            conv_meta_valid_stage5 <= 1'b0;
+            conv_meta_bank_stage1 <= 1'b0;
+            conv_meta_bank_stage2 <= 1'b0;
+            conv_meta_bank_stage3 <= 1'b0;
+            conv_meta_bank_stage4 <= 1'b0;
+            conv_meta_bank_stage5 <= 1'b0;
+            conv_meta_addr_stage1 <= '0;
+            conv_meta_addr_stage2 <= '0;
+            conv_meta_addr_stage3 <= '0;
+            conv_meta_addr_stage4 <= '0;
+            conv_meta_addr_stage5 <= '0;
+        end else begin
+            conv_meta_valid_stage1 <= controller_data_write_enable;
+            conv_meta_valid_stage2 <= conv_meta_valid_stage1;
+            conv_meta_valid_stage3 <= conv_meta_valid_stage2;
+            conv_meta_valid_stage4 <= conv_meta_valid_stage3;
+            conv_meta_valid_stage5 <= conv_meta_valid_stage4;
+            conv_meta_bank_stage1 <= controller_data_write_bank;
+            conv_meta_bank_stage2 <= conv_meta_bank_stage1;
+            conv_meta_bank_stage3 <= conv_meta_bank_stage2;
+            conv_meta_bank_stage4 <= conv_meta_bank_stage3;
+            conv_meta_bank_stage5 <= conv_meta_bank_stage4;
+            conv_meta_addr_stage1 <= controller_data_write_addr;
+            conv_meta_addr_stage2 <= conv_meta_addr_stage1;
+            conv_meta_addr_stage3 <= conv_meta_addr_stage2;
+            conv_meta_addr_stage4 <= conv_meta_addr_stage3;
+            conv_meta_addr_stage5 <= conv_meta_addr_stage4;
+
+            conv_write_we_reg   <= conv_quant_valid && conv_meta_valid_stage5;
+            conv_write_bank_reg <= conv_meta_bank_stage5;
+            conv_write_addr_reg <= conv_meta_addr_stage5;
+            conv_write_data_reg <= conv_wdata_quantized;
+        end
+    end
 
     always_comb begin
         case (layer_index)
@@ -285,9 +397,13 @@ module conv #(
         endcase
     end
 
-    requantize U_REQUANTIZE_CONV_WRITE (
+    requantize_pipeline U_REQUANTIZE_CONV_WRITE (
+        .clk     (clk),
+        .rst_n   (rst_n),
+        .in_valid(controller_data_write_enable),
         .layer   (requantize_layer),
         .acc_in  (ch_wdata),
+        .out_valid(conv_quant_valid),
         .quant_out(conv_wdata_quantized)
     );
 
@@ -297,11 +413,7 @@ module conv #(
         cfg_image_width        = LAYER1_PAD_WIDTH;
         cfg_image_height       = LAYER1_PAD_HEIGHT;
         cfg_input_channels     = 16'd1;
-        cfg_output_channels    = LAYER0_OUTPUT_CHANNELS;
         cfg_output_groups      = LAYER0_OUTPUT_CHANNELS / NUM_CH;
-        cfg_output_channel_base =
-            output_group_index * NUM_CH;
-        cfg_layer_weight_base = WEIGHT_BASE_LAYER0;
         cfg_MaxPool_en = LAYER0_MAXPOOL_EN;
         cfg_Relu_en    = LAYER0_RELU_EN;
 
@@ -310,7 +422,6 @@ module conv #(
                 cfg_source_bank     = 1'b0;
                 cfg_image_width     = LAYER1_PAD_WIDTH;
                 cfg_image_height    = LAYER1_PAD_HEIGHT;
-                cfg_layer_weight_base = WEIGHT_BASE_LAYER0;
                 cfg_MaxPool_en      = LAYER0_MAXPOOL_EN;
                 cfg_Relu_en         = LAYER0_RELU_EN;
             end
@@ -320,10 +431,8 @@ module conv #(
                 cfg_image_width     = LAYER2_PAD_WIDTH;
                 cfg_image_height    = LAYER2_PAD_HEIGHT;
                 cfg_input_channels  = LAYER0_OUTPUT_CHANNELS;
-                cfg_output_channels = LAYER1_OUTPUT_CHANNELS;
                 cfg_output_groups   =
                     LAYER1_OUTPUT_CHANNELS / NUM_CH;
-                cfg_layer_weight_base = WEIGHT_BASE_LAYER1;
                 cfg_MaxPool_en      = LAYER1_MAXPOOL_EN;
                 cfg_Relu_en         = LAYER1_RELU_EN;
             end
@@ -333,18 +442,12 @@ module conv #(
                 cfg_image_width     = LAYER3_PAD_WIDTH;
                 cfg_image_height    = LAYER3_PAD_HEIGHT;
                 cfg_input_channels  = LAYER1_OUTPUT_CHANNELS;
-                cfg_output_channels = LAYER2_OUTPUT_CHANNELS;
                 cfg_output_groups   =
                     LAYER2_OUTPUT_CHANNELS / NUM_CH;
-                cfg_layer_weight_base = WEIGHT_BASE_LAYER2;
                 cfg_MaxPool_en      = LAYER2_MAXPOOL_EN;
                 cfg_Relu_en         = LAYER2_RELU_EN;
             end
         endcase
-
-        // Conv_Controller's legacy address output is no longer used. The
-        // Weight_Loader calculates word addresses from group/channel indices.
-        cfg_group_weight_base = '0;
     end
 
     // Pool4 and Pool5 reuse one standalone engine. Layer 3 writes its compact
@@ -379,6 +482,16 @@ module conv #(
             cnn_state           <= CNN_IDLE;
             layer_index         <= 2'd0;
             output_group_index  <= '0;
+            active_cfg_source_bank <= 1'b0;
+            active_cfg_image_width <= '0;
+            active_cfg_image_height <= '0;
+            active_cfg_input_channels <= '0;
+            active_cfg_output_groups <= '0;
+            active_cfg_MaxPool_en <= 1'b0;
+            active_cfg_Relu_en <= 1'b0;
+            active_cfg_write_pixels_per_channel <= '0;
+            active_cfg_write_group_base_addr <= '0;
+            active_cfg_weight_group_base_addr <= '0;
             conv_start          <= 1'b0;
             pool_start          <= 1'b0;
             next_stage          <= NEXT_CONV;
@@ -394,8 +507,68 @@ module conv #(
                         output_group_index  <= '0;
                         next_stage          <= NEXT_CONV;
                         final_stage_done    <= 1'b0;
-                        cnn_state           <= START_GROUP;
+                        cnn_state           <= PREPARE_GROUP;
                     end
+                end
+
+                PREPARE_GROUP: begin
+                    active_cfg_source_bank <= cfg_source_bank;
+                    active_cfg_image_width <= cfg_image_width;
+                    active_cfg_image_height <= cfg_image_height;
+                    active_cfg_input_channels <= cfg_input_channels;
+                    active_cfg_output_groups <= cfg_output_groups;
+                    active_cfg_MaxPool_en <= cfg_MaxPool_en;
+                    active_cfg_Relu_en <= cfg_Relu_en;
+                    case (layer_index)
+                        2'd0: begin
+                            active_cfg_write_pixels_per_channel <=
+                                LAYER0_WRITE_PIXELS;
+                            active_cfg_weight_group_base_addr <=
+                                output_group_index
+                                * LAYER0_WEIGHT_GROUP_STRIDE;
+                            if (LAYER0_WRITE_GROUP_STRIDE_IS_POWER_OF_TWO)
+                                active_cfg_write_group_base_addr <=
+                                    output_group_index
+                                    << $clog2(LAYER0_WRITE_GROUP_STRIDE);
+                            else
+                                active_cfg_write_group_base_addr <=
+                                    output_group_index
+                                    * LAYER0_WRITE_GROUP_STRIDE;
+                        end
+
+                        2'd1: begin
+                            active_cfg_write_pixels_per_channel <=
+                                LAYER1_WRITE_PIXELS;
+                            active_cfg_weight_group_base_addr <=
+                                output_group_index
+                                * LAYER1_WEIGHT_GROUP_STRIDE;
+                            if (LAYER1_WRITE_GROUP_STRIDE_IS_POWER_OF_TWO)
+                                active_cfg_write_group_base_addr <=
+                                    output_group_index
+                                    << $clog2(LAYER1_WRITE_GROUP_STRIDE);
+                            else
+                                active_cfg_write_group_base_addr <=
+                                    output_group_index
+                                    * LAYER1_WRITE_GROUP_STRIDE;
+                        end
+
+                        default: begin
+                            active_cfg_write_pixels_per_channel <=
+                                LAYER2_WRITE_PIXELS;
+                            active_cfg_weight_group_base_addr <=
+                                output_group_index
+                                * LAYER2_WEIGHT_GROUP_STRIDE;
+                            if (LAYER2_WRITE_GROUP_STRIDE_IS_POWER_OF_TWO)
+                                active_cfg_write_group_base_addr <=
+                                    output_group_index
+                                    << $clog2(LAYER2_WRITE_GROUP_STRIDE);
+                            else
+                                active_cfg_write_group_base_addr <=
+                                    output_group_index
+                                    * LAYER2_WRITE_GROUP_STRIDE;
+                        end
+                    endcase
+                    cnn_state <= START_GROUP;
                 end
 
                 START_GROUP: begin
@@ -406,7 +579,7 @@ module conv #(
                 RUN_GROUP: begin
                     if (conv_done) begin
                         if (output_group_index
-                            == cfg_output_groups-1) begin
+                            == active_cfg_output_groups-1) begin
                             output_group_index <= '0;
 
                             if (layer_index < NUM_LAYERS-1) begin
@@ -425,7 +598,7 @@ module conv #(
                         end else begin
                             output_group_index <=
                                 output_group_index + 1'b1;
-                            cnn_state <= START_GROUP;
+                            cnn_state <= PREPARE_GROUP;
                         end
                     end
                 end
@@ -450,7 +623,7 @@ module conv #(
                         case (next_stage)
                             NEXT_POOL4: cnn_state <= START_POOL4;
                             NEXT_POOL5: cnn_state <= START_POOL5;
-                            default:    cnn_state <= START_GROUP;
+                            default:    cnn_state <= PREPARE_GROUP;
                         endcase
                     end
                 end
@@ -501,9 +674,8 @@ module conv #(
         .load_ready         (weight_load_ready),
         .busy               (),
         .weight_valid       (weight_valid),
-        .input_channels     (cfg_input_channels),
-        .output_groups      (cfg_output_groups),
-        .output_group_index (output_group_index),
+        .input_channels     (active_cfg_input_channels),
+        .group_base_address (active_cfg_weight_group_base_addr),
         .input_channel_index(current_input_channel),
         .wt_ren             (weight_ren),
         .wt_raddr           (weight_addr),
@@ -520,17 +692,16 @@ module conv #(
         .clk                    (clk),
         .rst_n                  (rst_n),
         .start                  (conv_start),
-        .source_bank            (cfg_source_bank),
-        .MaxPool_en             (cfg_MaxPool_en),
-        .cfg_image_width        (cfg_image_width),
-        .cfg_image_height       (cfg_image_height),
-        .cfg_input_channels     (cfg_input_channels),
-        .cfg_output_channel_base(cfg_output_channel_base),
-        .weight_base_addr       (cfg_group_weight_base),
+        .source_bank            (active_cfg_source_bank),
+        .MaxPool_en             (active_cfg_MaxPool_en),
+        .cfg_image_width        (active_cfg_image_width),
+        .cfg_image_height       (active_cfg_image_height),
+        .cfg_input_channels     (active_cfg_input_channels),
+        .cfg_write_pixels_per_channel(active_cfg_write_pixels_per_channel),
+        .cfg_write_group_base_addr(active_cfg_write_group_base_addr),
         .busy                   (conv_busy),
         .done                   (conv_done),
         .weight_load_start      (controller_weight_load_start),
-        .weight_load_addr       (controller_weight_load_addr),
         .weight_load_ready      (weight_load_ready),
         .weight_valid           (weight_valid),
         .data_read_enable       (controller_data_read_enable),
@@ -657,8 +828,8 @@ module conv #(
         .clk            (clk),
         .rst_n          (rst_n),
         .clear          (result_buffer_clear),
-        .MaxPool_en     (cfg_MaxPool_en),
-        .Relu_en        (cfg_Relu_en),
+        .MaxPool_en     (active_cfg_MaxPool_en),
+        .Relu_en        (active_cfg_Relu_en),
         .conv_data      (conv_result),
         .conv_valid     (conv_result_valid),
         .conv_ready     (result_conv_ready),
@@ -682,10 +853,14 @@ module conv #(
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             data_read_pending <= 1'b0;
+            data_read_pending_d <= 1'b0;
+            data_read_pending_d2 <= 1'b0;
             data_reg       <= 8'd0;
             data_reg_valid <= 1'b0;
         end else begin
             data_read_pending <= data_read_req_fire;
+            data_read_pending_d <= data_read_pending;
+            data_read_pending_d2 <= data_read_pending_d;
 
             if (data_reg_valid && shift_pixel_ready)
                 data_reg_valid <= 1'b0;

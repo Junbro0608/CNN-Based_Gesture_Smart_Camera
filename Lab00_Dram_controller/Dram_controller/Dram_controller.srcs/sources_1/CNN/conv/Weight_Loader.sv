@@ -9,16 +9,14 @@
 //     output-group -> input-channel -> kernel-position
 //
 //     weight address =
-//       output_group_index * (input_channels * 9 + 4)
-//       + input_channel_index * 9 + kernel_index
+//       group_base_address + input_channel_index * 9 + kernel_index
 //
 //   Bias words:
 //     four 64-bit words per eight-output-channel group, after every weight
 //     block. Each word holds two signed 32-bit biases.
 //
 //     bias address =
-//       output_group_index * (input_channels * 9 + 4)
-//       + input_channels * 9 + bias_pair_index
+//       group_base_address + input_channels * 9 + bias_pair_index
 //
 // One 64-bit word contains eight signed 8-bit channel values:
 //   [ 7: 0] = CH0, [15: 8] = CH1, ... [63:56] = CH7
@@ -42,8 +40,7 @@ module Weight_Loader #(
 
     // Active-layer configuration and current indices.
     input  logic [CONFIG_WIDTH-1:0] input_channels,
-    input  logic [CONFIG_WIDTH-1:0] output_groups,
-    input  logic [CONFIG_WIDTH-1:0] output_group_index,
+    input  logic [ADDR_WIDTH-1:0]   group_base_address,
     input  logic [CONFIG_WIDTH-1:0] input_channel_index,
 
     // External synchronous-read 64-bit weight-buffer interface.
@@ -73,18 +70,15 @@ module Weight_Loader #(
 
     logic [3:0] issue_word_index;
     logic [3:0] capture_word_index;
-    logic [ADDR_WIDTH-1:0] weight_start_addr;
-    logic [ADDR_WIDTH-1:0] bias_word_addr;
+    logic [ADDR_WIDTH-1:0] weight_request_addr;
+    logic [ADDR_WIDTH-1:0] bias_request_addr;
     logic                  weight_data_pending;
     logic [2:0]            bias_issue_word_index;
     logic [2:0]            bias_capture_word_index;
     logic                  bias_data_pending;
 
     logic [CALC_WIDTH-1:0] input_channels_calc;
-    logic [CALC_WIDTH-1:0] output_groups_calc;
-    logic [CALC_WIDTH-1:0] output_group_index_calc;
     logic [CALC_WIDTH-1:0] input_channel_index_calc;
-    logic [CALC_WIDTH-1:0] group_words_calc;
     logic [CALC_WIDTH-1:0] weight_start_calc_wide;
     logic [CALC_WIDTH-1:0] bias_addr_calc_wide;
     logic [ADDR_WIDTH-1:0] weight_start_calc;
@@ -96,23 +90,15 @@ module Weight_Loader #(
     always_comb begin
         input_channels_calc =
             {{(CALC_WIDTH-CONFIG_WIDTH){1'b0}}, input_channels};
-        output_groups_calc =
-            {{(CALC_WIDTH-CONFIG_WIDTH){1'b0}}, output_groups};
-        output_group_index_calc =
-            {{(CALC_WIDTH-CONFIG_WIDTH){1'b0}}, output_group_index};
         input_channel_index_calc =
             {{(CALC_WIDTH-CONFIG_WIDTH){1'b0}}, input_channel_index};
 
-        group_words_calc =
-            (input_channels_calc * NUM_KERNEL_WORDS)
-            + BIAS_WORDS_PER_GROUP;
-
         weight_start_calc_wide =
-            (output_group_index_calc * group_words_calc)
+            {{(CALC_WIDTH-ADDR_WIDTH){1'b0}}, group_base_address}
             + (input_channel_index_calc * NUM_KERNEL_WORDS);
 
         bias_addr_calc_wide =
-            (output_group_index_calc * group_words_calc)
+            {{(CALC_WIDTH-ADDR_WIDTH){1'b0}}, group_base_address}
             + (input_channels_calc * NUM_KERNEL_WORDS);
 
         weight_start_calc =
@@ -130,7 +116,7 @@ module Weight_Loader #(
             LOAD_WEIGHT: begin
                 if (issue_word_index < NUM_KERNEL_WORDS) begin
                     wt_ren   = 1'b1;
-                    wt_raddr = weight_start_addr + issue_word_index;
+                    wt_raddr = weight_request_addr;
                 end else begin
                     wt_raddr = '0;
                 end
@@ -139,7 +125,7 @@ module Weight_Loader #(
             LOAD_BIAS: begin
                 if (bias_issue_word_index < BIAS_WORDS_PER_GROUP) begin
                     wt_ren   = 1'b1;
-                    wt_raddr = bias_word_addr + bias_issue_word_index;
+                    wt_raddr = bias_request_addr;
                 end else begin
                     wt_raddr = '0;
                 end
@@ -155,8 +141,8 @@ module Weight_Loader #(
             state             <= IDLE;
             issue_word_index  <= 4'd0;
             capture_word_index <= 4'd0;
-            weight_start_addr <= '0;
-            bias_word_addr    <= '0;
+            weight_request_addr <= '0;
+            bias_request_addr <= '0;
             weight_data_pending <= 1'b0;
             bias_issue_word_index <= '0;
             bias_capture_word_index <= '0;
@@ -175,8 +161,8 @@ module Weight_Loader #(
             case (state)
                 IDLE: begin
                     if (load_start && load_ready) begin
-                        weight_start_addr <= weight_start_calc;
-                        bias_word_addr    <= bias_addr_calc;
+                        weight_request_addr <= weight_start_calc;
+                        bias_request_addr <= bias_addr_calc;
                         issue_word_index  <= 4'd0;
                         capture_word_index <= 4'd0;
                         weight_data_pending <= 1'b0;
@@ -201,6 +187,7 @@ module Weight_Loader #(
 
                     if (issue_word_index < NUM_KERNEL_WORDS) begin
                         issue_word_index    <= issue_word_index + 1'b1;
+                        weight_request_addr <= weight_request_addr + 1'b1;
                         weight_data_pending <= 1'b1;
                     end else begin
                         weight_data_pending <= 1'b0;
@@ -225,6 +212,7 @@ module Weight_Loader #(
 
                     if (bias_issue_word_index < BIAS_WORDS_PER_GROUP) begin
                         bias_issue_word_index <= bias_issue_word_index + 1'b1;
+                        bias_request_addr <= bias_request_addr + 1'b1;
                         bias_data_pending <= 1'b1;
                     end else begin
                         bias_data_pending <= 1'b0;
