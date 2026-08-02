@@ -2,92 +2,93 @@
 
 ![Top-level diagram](./read_src/top_bd.png)
 
-## Overview
+## 개요
 
-This repository implements an int8 CNN person/non-person classifier for the
-Zybo Z7-20. The RTL top module is `CNN_accelerator`. It reads one 128x128
-signed-int8 image, executes the CNN, and returns a one-bit classification
-result.
+이 저장소는 Zybo Z7-20 보드에서 동작하는 int8 CNN 기반 사람/논사람
+분류기를 구현합니다. RTL 최상위 모듈은 `CNN_accelerator`이며,
+128x128 signed-int8 이미지를 1장 입력받아 CNN 추론을 수행한 뒤
+1비트 분류 결과를 출력합니다.
 
-The design reuses one physical eight-lane convolution array (`NUM_CH=8`) for
-all output-channel groups. This keeps DSP and logic use practical on the Zynq
-7020, while making layer execution iterative.
+설계는 하나의 물리적 8-lane Convolution 배열(`NUM_CH=8`)을
+모든 출력 채널 그룹에서 재사용합니다. 이를 통해 Zynq-7020에서
+DSP/로직 자원 사용량을 현실적으로 유지하면서 레이어 처리를 반복형으로 구성했습니다.
 
-## Network
+## 네트워크 구조
 
-| Stage | Operation | Feature size | Channels |
+| Stage | 연산 | Feature 크기 | 채널 |
 | --- | --- | --- | --- |
-| Conv1 | 3x3 convolution, ReLU, 2x2 max-pool | 128x128 -> 64x64 | 1 -> 16 |
-| Conv2 | 3x3 convolution, ReLU, 2x2 max-pool | 64x64 -> 32x32 | 16 -> 32 |
-| Conv3 | 3x3 convolution, ReLU, 2x2 max-pool | 32x32 -> 16x16 | 32 -> 64 |
-| Pool4 | 2x2 max-pool | 16x16 -> 8x8 | 64 |
-| Pool5 | 2x2 max-pool | 8x8 -> 4x4 | 64 |
-| FC1 | Fully connected and requantization | 1024 -> 64 | 1024 = 64 x 4 x 4 |
-| FC2 | Fully connected classifier | 64 -> 1 | 1 |
+| Conv1 | 3x3 Convolution, ReLU, 2x2 MaxPool | 128x128 -> 64x64 | 1 -> 16 |
+| Conv2 | 3x3 Convolution, ReLU, 2x2 MaxPool | 64x64 -> 32x32 | 16 -> 32 |
+| Conv3 | 3x3 Convolution, ReLU, 2x2 MaxPool | 32x32 -> 16x16 | 32 -> 64 |
+| Pool4 | 2x2 MaxPool | 16x16 -> 8x8 | 64 |
+| Pool5 | 2x2 MaxPool | 8x8 -> 4x4 | 64 |
+| FC1 | Fully Connected + Requantization | 1024 -> 64 | 1024 = 64 x 4 x 4 |
+| FC2 | Fully Connected 분류기 | 64 -> 1 | 1 |
 
-Each 64-bit Conv weight word contains eight signed int8 weights, one for each
-physical output lane. FC2's final signed accumulation determines `result`.
+64비트 Conv weight word 하나에는 물리적 출력 lane 8개에 대응하는
+signed int8 weight 8개가 들어갑니다. FC2의 최종 signed 누적값으로
+`result`를 판정합니다.
 
-## RTL Structure
+## RTL 구성
 
-| Module | Role |
+| 모듈 | 역할 |
 | --- | --- |
-| `CNN_accelerator` | Integrates the scheduler, Conv, FC, padding, ping-pong feature BRAM, and weight ROM. |
-| `CNN_acc_controller` | Schedules Conv1-3, Pool4-5, FC1, and FC2; owns stage-level memory selection. |
-| `conv/conv` | Selects active Conv configuration, iterates output groups, and bridges data/weight interfaces. |
-| `conv/Conv_Controller` | Runs one output group: weight load, padded feature requests, tile control, and result write commands. |
-| `conv/Weight_Loader` | Reads nine kernel words and four bias words for one input channel/output group. |
-| `conv/Shift_Buffer` | Captures a 4x4 input tile and emits its four overlapping 3x3 windows. |
-| `conv/CH`, `conv/CH_wrapper` | Eight parallel signed MAC lanes. `CH` contains a three-stage product/reduction pipeline. |
-| `conv/CH_Result_Buffer` | Captures four Conv result vectors, applies pool/ReLU selection, and serializes feature writes. |
-| `conv/Standalone_MaxPool` | Implements Pool4 and Pool5. |
-| `fc/*` | FC controller, MAC core, output buffer, and requantization path. |
-| `padding` | Converts tile/row/column requests to zero-padded image or feature-buffer addresses. |
-| `Buffer.sv` | Feature ping-pong BRAM and shared synchronous weight ROM. |
+| `CNN_accelerator` | 스케줄러, Conv, FC, padding, ping-pong feature BRAM, weight ROM을 통합합니다. |
+| `CNN_acc_controller` | Conv1~3, Pool4~5, FC1, FC2를 스케줄링하며 stage 단위 메모리 선택을 관리합니다. |
+| `conv/conv` | 활성 Conv 설정을 선택하고 output group 반복 및 data/weight 인터페이스 브리징을 수행합니다. |
+| `conv/Conv_Controller` | output group 1개 기준으로 weight 로드, padding feature 요청, tile 제어, 결과 write 명령을 처리합니다. |
+| `conv/Weight_Loader` | input channel/output group 기준으로 커널 9워드와 bias 4워드를 읽습니다. |
+| `conv/Shift_Buffer` | 4x4 입력 tile을 캡처하고 겹치는 3x3 윈도우 4개를 출력합니다. |
+| `conv/CH`, `conv/CH_wrapper` | signed MAC lane 8개 병렬 처리 블록입니다. `CH`는 3단 product/reduction 파이프라인을 포함합니다. |
+| `conv/CH_Result_Buffer` | Conv 결과 벡터 4개를 저장하고 pool/ReLU를 적용한 뒤 feature write를 직렬화합니다. |
+| `conv/Standalone_MaxPool` | Pool4, Pool5를 수행합니다. |
+| `fc/*` | FC controller, MAC core, output buffer, requantization 경로를 포함합니다. |
+| `padding` | tile/row/column 요청을 zero-padding된 이미지/feature-buffer 주소로 변환합니다. |
+| `Buffer.sv` | feature용 ping-pong BRAM과 공유 synchronous weight ROM을 제공합니다. |
 
-## Memory and Latency Contracts
+## 메모리 및 지연(latency) 규약
 
-Feature data lives in two ping-pong BRAM banks. A stage reads the bank opposite
-the selected write bank, preventing an active stage from overwriting its own
-input. Conv and FC share this memory through top-level read/write multiplexers.
+Feature 데이터는 ping-pong BRAM bank 2개에 저장됩니다.
+각 stage는 현재 write bank의 반대 bank를 read하여,
+동작 중인 stage가 자신의 입력을 덮어쓰지 않도록 합니다.
+Conv와 FC는 top-level read/write mux를 통해 이 메모리를 공유합니다.
 
-The weight memory is a synchronous 64-bit ROM. `weight_mem` adds the selected
-layer base address before the ROM access.
+Weight 메모리는 synchronous 64비트 ROM입니다.
+`weight_mem`은 ROM 접근 전에 선택된 layer의 base address를 더합니다.
 
-The important latency rules are:
+중요한 latency 규칙은 다음과 같습니다.
 
-- FC and Pool4/Pool5 retain one-cycle direct feature-BRAM read behavior.
-- Padded Conv reads use a registered address in `padding` and a second
-  top-level address register. Returned data is matched with a three-cycle Conv
-  valid pipeline.
-- Any new address register requires an equal delay for its request valid and
-  associated control metadata. Address-only edits can silently change
-  classifier scores.
+- FC와 Pool4/Pool5는 1-cycle direct feature-BRAM read 동작을 유지합니다.
+- Padding Conv read는 `padding` 내부 register 주소와 top-level의 2차 주소 register를 사용합니다.
+  반환 데이터는 3-cycle Conv valid 파이프라인과 정렬됩니다.
+- 새로운 주소 register를 추가하면, 요청 valid 및 관련 제어 메타데이터에도 동일한 지연을 반드시 맞춰야 합니다.
+  주소만 수정해도 분류 점수가 조용히 변할 수 있습니다.
 
-For one Conv output group, the controller loads an input channel's weights,
-reads a 4x4 padded tile, processes its four 3x3 windows, accumulates across
-all input channels, then requantizes and writes the resulting features.
+Conv output group 1개 처리 시 컨트롤러는 다음 순서로 동작합니다.
+input channel weight 로드 -> 4x4 padded tile read ->
+3x3 윈도우 4개 처리 -> 전체 input channel 누적 ->
+requantize -> feature write.
 
-## Timing Status
+## 타이밍 상태
 
-The target clock period is 8 ns. The latest implemented result after moving
-the padding address calculation behind a clocked boundary is:
+목표 클럭 주기는 8ns입니다.
+Padding 주소 계산을 clock 경계 뒤로 이동한 뒤 최신 구현 결과는 다음과 같습니다.
 
-| Metric | Result |
+| 지표 | 결과 |
 | --- | --- |
 | WNS | +0.124 ns |
 | TNS | 0 ns |
-| Setup violations | 0 |
+| Setup 위반 | 0 |
 
-This is a standalone-project result. The desired margin before larger FPGA
-integration is approximately `+0.3 ns` to `+0.5 ns`; full-system routing can
-reduce the available slack.
+이 수치는 standalone 프로젝트 기준입니다.
+더 큰 FPGA 통합 전 권장 여유는 대략 `+0.3 ns` ~ `+0.5 ns`이며,
+전체 시스템 라우팅에서 여유가 줄어들 수 있습니다.
 
-## Implementation Resources and Power
+## 구현 자원 및 전력
 
-The latest post-implementation utilization and power estimate are:
+최신 implementation 이후 자원 사용량 및 전력 추정은 다음과 같습니다.
 
-| Resource | Used | Available | Utilization |
+| 자원 | 사용량 | 총량 | 사용률 |
 | --- | ---: | ---: | ---: |
 | LUT | 10,482 | 53,200 | 19.70% |
 | LUTRAM | 8 | 17,400 | 0.05% |
@@ -97,116 +98,113 @@ The latest post-implementation utilization and power estimate are:
 | IO | 28 | 125 | 22.40% |
 | BUFG | 1 | 32 | 3.13% |
 
-| Power metric | Estimate |
+| 전력 지표 | 추정치 |
 | --- | ---: |
-| Total on-chip power | 0.535 W |
-| Junction temperature | 31.2 C |
-| Thermal margin | 53.8 C at 4.5 W limit |
-| Effective theta-JA | 11.5 C/W |
+| 총 온칩 전력 | 0.535 W |
+| 접합 온도 | 31.2 C |
+| 열 여유 | 4.5 W 한계 기준 53.8 C |
+| 유효 theta-JA | 11.5 C/W |
 
-The power estimate has low confidence because it is implementation-based rather
-than activity-calibrated. BRAM is the most constrained major resource, while
-LUT, FF, and DSP headroom remains substantial.
+전력 추정은 activity 보정 기반이 아닌 implementation 기반이라 신뢰도가 낮습니다.
+주요 자원 중 BRAM 제약이 가장 크고, LUT/FF/DSP는 여유가 비교적 충분합니다.
 
-Current timing-oriented changes include:
+현재 타이밍 개선 관련 변경 사항은 다음과 같습니다.
 
-- Shift-based power-of-two address calculations.
-- Precomputed Conv weight-group base addresses, removing the former dynamic
-  group-stride multiplier from the Weight Loader request path.
-- Registered FC memory ownership and a bias-prefetch state, avoiding FSM to
-  ROM-address critical paths.
-- Pipelined requantization, Conv write metadata, and standalone max-pool
-  samples.
-- Registered padding addresses and a matching Conv read-valid delay.
+- 2의 거듭제곱 기반 shift 주소 계산 적용
+- Conv weight group base address 사전 계산으로
+  Weight Loader 요청 경로의 동적 group-stride 곱셈 제거
+- FC 메모리 소유권 register화 및 bias-prefetch 상태 추가로
+  FSM->ROM 주소 임계 경로 회피
+- Requantization, Conv write metadata, Standalone MaxPool 샘플 파이프라인화
+- Padding 주소 register화 및 Conv read-valid 지연 정합
 
-Do not reintroduce broad `max_fanout`, `keep`, or `dont_touch` constraints as
-a default timing fix. Earlier experiments showed they can worsen routing.
-Always rerun synthesis and implementation after RTL changes; an old report is
-not evidence for the current sources.
+기본 타이밍 대응으로 광범위한 `max_fanout`, `keep`, `dont_touch`
+제약을 다시 넣지 마십시오. 이전 실험에서 라우팅이 악화된 사례가 있습니다.
+RTL 변경 후에는 반드시 synthesis/implementation을 재실행해야 하며,
+이전 리포트는 현재 소스의 근거가 될 수 없습니다.
 
-## Performance Work
+## 성능 개선 작업
 
-The original focused inference completed in `9,947,909` cycles. The Conv MAC
-lanes now contain a three-stage streaming pipeline: product capture, pair-sum,
-and final reduction/accumulation. In steady state it can accept one 3x3 window
-per cycle, subject to result-buffer backpressure.
+기존 focused 추론은 `9,947,909` cycles가 소요되었습니다.
+현재 Conv MAC lane은 product capture -> pair-sum -> final reduction/accumulation
+3단 스트리밍 파이프라인으로 구성되어,
+result-buffer backpressure가 없는 구간에서는 3x3 윈도우를 cycle당 1개 처리할 수 있습니다.
 
-The continuous feature-read scheduler experiment reduced inference time to
-`6,605,573` cycles, but it changed FC1 features and misclassified
-`nonperson1`. That change was reverted. Back-to-back padded requests need an
-explicit request/response FIFO that preserves the three-cycle
-address/data association; simply removing the coordinate-prepare bubble is not
-functionally safe.
+연속 feature-read 스케줄러 실험에서 추론 시간이 `6,605,573` cycles로 줄었지만,
+FC1 feature 값이 바뀌며 `nonperson1` 오분류가 발생해 해당 변경은 되돌렸습니다.
+연속 padded request를 안전하게 처리하려면
+3-cycle 주소/데이터 연관을 보존하는 명시적 request/response FIFO가 필요합니다.
+좌표 준비 버블만 제거하는 방식은 기능적으로 안전하지 않습니다.
 
-Remaining Conv throughput candidates, in priority order:
+남은 Conv 처리량 개선 후보(우선순위 순):
 
-1. Add a latency-aware padded-read request FIFO to safely issue one feature
-   request per cycle.
-2. Double-buffer Conv weights so the next input channel can prefetch while the
-   current tile is processed.
-3. Make `CH_Result_Buffer` stream consecutive write outputs without its
-   `PREPARE_OUTPUT` bubble.
+1. latency를 고려한 padded-read request FIFO를 추가해 feature 요청을 cycle당 1회 안전하게 발행
+2. Conv weight 이중 버퍼링으로 현재 tile 처리 중 다음 input channel prefetch
+3. `CH_Result_Buffer`의 `PREPARE_OUTPUT` 버블 제거 후 연속 write 스트리밍
 
-## Verification
+## 검증
 
-Simulation sources are in
-`Lab00_Dram_controller/Dram_controller/Dram_controller.srcs/sim_1`.
+시뮬레이션 소스 위치:
+`Lab00_Dram_controller/Dram_controller/Dram_controller.srcs/sim_1`
 
-| Testbench | Scope |
+| 테스트벤치 | 범위 |
 | --- | --- |
-| `tb_CNN_accelerator_mem.sv` | Focused four-image regression: two person and two non-person images. |
-| `tb_CNN_accelerator_mem_all.sv` | Larger person/non-person regression. |
-| `tb_padding_sizes.sv` | Padding/address checks for supported feature-map sizes. |
+| `tb_CNN_accelerator_mem.sv` | 집중형 4장 회귀 테스트(사람 2장 + 논사람 2장) |
+| `tb_CNN_accelerator_mem_all.sv` | 대규모 사람/논사람 회귀 테스트 |
+| `tb_padding_sizes.sv` | 지원 feature-map 크기에 대한 padding/주소 검증 |
 
-The focused test uses a `12,000,000` cycle timeout to accommodate the added
-memory pipeline latency. A passing run must report all four expected decisions
-and end with `ALL TESTS PASSED (4 cases)`.
+Focused 테스트는 메모리 파이프라인 지연을 반영해
+`12,000,000` cycle timeout을 사용합니다.
+정상 통과 기준은 기대된 4개 판정을 모두 보고하고,
+최종 메시지로 `ALL TESTS PASSED (4 cases)`를 출력하는 것입니다.
 
-The current source state needs a fresh focused regression after the CH MAC
-pipeline change. The reverted continuous feature-read change must remain
-reverted unless its request/data ordering is redesigned and verified.
+현재 소스 상태에서는 CH MAC 파이프라인 변경 이후 focused 회귀를 다시 수행해야 합니다.
+연속 feature-read 변경은 요청/데이터 정렬 구조를 재설계하고 검증하기 전까지
+되돌린 상태를 유지해야 합니다.
 
-## Troubleshooting
+## 트러블슈팅
 
-### Simulation fails before compiling
+### 시뮬레이션이 컴파일 전에 실패하는 경우
 
-Vivado/XSim can leave `simulate.log` locked. Typical message:
+Vivado/XSim 환경에서 `simulate.log`가 잠겨 삭제 실패가 날 수 있습니다.
+대표 메시지:
 
 ```text
 boost::filesystem::remove: ... simulate.log
 ```
 
-Close the active simulation and Vivado. Ensure `vivado.exe`, `xsim.exe`,
-`xelab.exe`, and `xvlog.exe` are no longer running, then relaunch the
-behavioral simulation.
+활성 시뮬레이션과 Vivado를 종료한 뒤,
+`vivado.exe`, `xsim.exe`, `xelab.exe`, `xvlog.exe` 프로세스가 모두 종료됐는지 확인하고
+Behavioral Simulation을 다시 실행하십시오.
 
-### `xvlog` compile failure
+### `xvlog` 컴파일 실패
 
-Read:
+다음 로그를 확인하십시오.
 
 ```text
 Dram_controller.sim/sim_1/behav/xsim/xvlog.log
 ```
 
-The first `ERROR: [VRFC ...]` line is the actionable error. Editor diagnostics
-can miss compile paths that XSim elaborates through the full project.
+첫 번째 `ERROR: [VRFC ...]` 라인이 실제 조치 대상입니다.
+에디터 진단만으로는 XSim이 전체 프로젝트를 elaborate하면서 드러나는 경로를
+놓칠 수 있습니다.
 
-### Timing regresses after a pipeline change
+### 파이프라인 변경 후 타이밍이 악화되는 경우
 
-Check the new critical-path source and destination in a fresh implementation
-report. Do not preserve a register with placement constraints before measuring
-the new result. For every shared-memory address stage, check the corresponding
-valid/control delay in `conv.sv`, FC control, or Pool control.
+새 implementation 리포트에서 임계 경로의 source/destination을 먼저 확인하십시오.
+새 결과를 측정하기 전 placement 제약이 걸린 register를 유지하지 마십시오.
+공유 메모리 주소 stage마다 `conv.sv`, FC 제어, Pool 제어의
+valid/control 지연 정합을 함께 확인해야 합니다.
 
-### Scores or classifications change after a timing edit
+### 타이밍 수정 후 점수/분류 결과가 바뀌는 경우
 
-Treat this as a data/control alignment bug until proven otherwise. Compare:
+증거가 나올 때까지 데이터/제어 정렬 버그로 간주하고 다음 항목을 비교하십시오.
 
-- inference cycle count;
-- final signed score and decision;
-- FC1 feature signature printed by the focused testbench;
-- padded-read address latency against `data_read_pending`,
-  `data_read_pending_d`, and `data_read_pending_d2`.
+- 추론 cycle 수
+- 최종 signed 점수 및 판정
+- focused 테스트벤치가 출력하는 FC1 feature signature
+- padded-read 주소 지연과 `data_read_pending`,
+  `data_read_pending_d`, `data_read_pending_d2`의 정합
 
-Only accept a performance optimization after both classification correctness
-and implementation timing are revalidated.
+분류 정확성과 implementation 타이밍을 모두 재검증한 뒤에만
+성능 최적화를 수용해야 합니다.
