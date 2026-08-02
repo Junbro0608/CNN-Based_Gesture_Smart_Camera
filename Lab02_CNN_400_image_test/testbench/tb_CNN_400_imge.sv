@@ -1,0 +1,209 @@
+`timescale 1ns / 1ps
+
+module tb_CNN_400_imge;
+
+	localparam int IMG_WIDTH  = 128;
+	localparam int IMG_HEIGHT = 128;
+	localparam int IMG_PIXELS = IMG_WIDTH * IMG_HEIGHT;
+
+	localparam int PERSON_COUNT    = 200;
+	localparam int NONPERSON_COUNT = 200;
+	localparam int TOTAL_CASES     = PERSON_COUNT + NONPERSON_COUNT;
+	localparam int TIMEOUT_CYCLES  = 12000000;
+
+	// Linux/Windows 공통으로 동작하도록 testbench 기준 상대경로를 사용한다.
+	localparam string MEM_BASE_DIR = "test_image";
+
+	logic clk;
+	logic rst_n;
+	logic start;
+	logic done;
+	logic busy;
+	logic result;
+
+	logic [$clog2(IMG_PIXELS)-1:0] img_raddr;
+	logic signed [7:0] img_rdata;
+	logic signed [7:0] img_mem [0:IMG_PIXELS-1];
+
+	int err_count;
+	int pass_count;
+	int fail_count;
+	int total_done_count;
+	int case_seq;
+
+	CNN_accelerator dut (
+		.sysclk   (clk),
+		.rst_n    (rst_n),
+		.start    (start),
+		.done     (done),
+		.busy     (busy),
+		.result   (result),
+		.img_raddr(img_raddr),
+		.img_rdata(img_rdata)
+	);
+
+	// 125 MHz clock (8 ns period)
+	always #4 clk = ~clk;
+
+	// BRAM-like synchronous image read: data returns one cycle after address.
+	always_ff @(posedge clk) begin
+		img_rdata <= img_mem[img_raddr];
+	end
+
+	task automatic clear_image_mem;
+		int i;
+		begin
+			for (i = 0; i < IMG_PIXELS; i = i + 1) begin
+				img_mem[i] = '0;
+			end
+		end
+	endtask
+
+	task automatic load_image_mem(input string mem_path, output bit load_ok);
+		int fd;
+		int code;
+		int i;
+		int pixel_val;
+		begin
+			load_ok = 1'b0;
+			$display("[TB] loading image memory: %s", mem_path);
+
+			fd = $fopen(mem_path, "r");
+			if (fd == 0) begin
+				err_count = err_count + 1;
+				fail_count = fail_count + 1;
+				$display("[FAIL] cannot open image memory file: %s", mem_path);
+			end else begin
+				// test_image/*.mem 파일은 128x128 전체 픽셀(16384줄)을 담고 있어
+				// 케이스마다 전체 clear 없이 바로 덮어써도 안전하다.
+				for (i = 0; i < IMG_PIXELS; i = i + 1) begin
+					code = $fscanf(fd, "%d\n", pixel_val);
+					if (code == 1)
+						img_mem[i] = pixel_val[7:0];
+					else
+						break;
+				end
+				$fclose(fd);
+				load_ok = 1'b1;
+			end
+		end
+	endtask
+
+	task automatic pulse_start;
+		begin
+			@(posedge clk);
+			start <= 1'b1;
+			@(posedge clk);
+			start <= 1'b0;
+		end
+	endtask
+
+	task automatic wait_done(input int timeout_cycles, output bit done_ok);
+		int cycle_count;
+		begin
+			cycle_count = 0;
+			done_ok = 1'b0;
+
+			while ((done !== 1'b1) && (cycle_count < timeout_cycles)) begin
+				@(posedge clk);
+				cycle_count = cycle_count + 1;
+			end
+
+			if (done !== 1'b1) begin
+				err_count = err_count + 1;
+				fail_count = fail_count + 1;
+				$display("[FAIL] timeout waiting for done after %0d cycles", timeout_cycles);
+			end else begin
+				done_ok = 1'b1;
+				total_done_count = total_done_count + 1;
+				$display("[TB] done asserted after %0d cycles", cycle_count);
+			end
+		end
+	endtask
+
+	task automatic run_case(
+		input string mem_path,
+		input logic expected_result
+	);
+		bit load_ok;
+		bit done_ok;
+		string pred_label;
+		string exp_label;
+		begin
+			case_seq = case_seq + 1;
+			exp_label = (expected_result == 1'b1) ? "person" : "nonperson";
+
+			load_image_mem(mem_path, load_ok);
+			if (!load_ok)
+				return;
+
+			pulse_start();
+			wait_done(TIMEOUT_CYCLES, done_ok);
+			if (!done_ok)
+				return;
+
+			pred_label = (result == 1'b1) ? "person" : "nonperson";
+
+			if (result !== expected_result) begin
+				err_count = err_count + 1;
+				fail_count = fail_count + 1;
+				$display("[FAIL][%0d/%0d] %s | pred=%s exp=%s", case_seq, TOTAL_CASES, mem_path, pred_label, exp_label);
+			end else begin
+				pass_count = pass_count + 1;
+				$display("[PASS][%0d/%0d] %s | pred=%s exp=%s", case_seq, TOTAL_CASES, mem_path, pred_label, exp_label);
+			end
+
+			// done pulse가 내려간 뒤 다음 케이스를 시작한다.
+			@(posedge clk);
+		end
+	endtask
+
+	task automatic run_group(input string cls_name, input int count, input logic expected_result);
+		int idx;
+		string mem_path;
+		begin
+			for (idx = 0; idx < count; idx = idx + 1) begin
+				mem_path = $sformatf("%s/%s%0d.mem", MEM_BASE_DIR, cls_name, idx);
+				run_case(mem_path, expected_result);
+			end
+		end
+	endtask
+
+	initial begin
+		clk = 1'b0;
+		rst_n = 1'b0;
+		start = 1'b0;
+		err_count = 0;
+		pass_count = 0;
+		fail_count = 0;
+		total_done_count = 0;
+		case_seq = 0;
+
+		clear_image_mem();
+
+		repeat (8) @(posedge clk);
+		rst_n = 1'b1;
+		repeat (4) @(posedge clk);
+
+		$display("[TB] start full regression: %0d images", TOTAL_CASES);
+		$display("[TB] mem base dir = %s", MEM_BASE_DIR);
+		$display("[TB] clock = 125MHz (8ns)");
+
+		run_group("person", PERSON_COUNT, 1'b1);
+		run_group("nonperson", NONPERSON_COUNT, 1'b0);
+
+		$display("\n[TB] SUMMARY");
+		$display("[TB] total_done_count=%0d", total_done_count);
+		$display("[TB] pass_count=%0d", pass_count);
+		$display("[TB] fail_count=%0d", fail_count);
+		$display("[TB] err_count=%0d", err_count);
+
+		if ((err_count == 0) && (pass_count == TOTAL_CASES))
+			$display("\nALL TESTS PASSED (%0d cases)", TOTAL_CASES);
+		else
+			$display("\nTEST FAILED (pass=%0d fail=%0d err=%0d)", pass_count, fail_count, err_count);
+
+		$finish;
+	end
+
+endmodule
