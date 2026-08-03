@@ -75,12 +75,15 @@ module Conv_Controller #(
     // Nine signed 8-bit weights and one signed 32-bit bias per channel.
     localparam integer WEIGHT_PACKET_BYTES = 13 * NUM_CH;
 
+    localparam integer DATA_READ_ADDR_WIDTH = CONFIG_WIDTH + 2;
+
     typedef enum logic [3:0] {
         IDLE,
         SET_WEIGHT_DATA,
         CONV,
         POST_PROCESS,
         PUSH_DATA,
+        PREPARE_NEXT_TILE,
         WRITE_DRAIN,
         DONE
     } state_t;
@@ -109,12 +112,12 @@ module Conv_Controller #(
     logic [ADDR_WIDTH-1:0] write_group_base_addr;
     logic [ADDR_WIDTH-1:0] write_channel_base_addr;
     logic [ADDR_WIDTH-1:0] write_spatial_addr;
-    logic [ADDR_WIDTH-1:0] data_read_addr_reg;
-    logic [ADDR_WIDTH-1:0] data_read_row_step_reg;
-    logic [ADDR_WIDTH-1:0] data_read_plane_step_reg;
-    logic [ADDR_WIDTH-1:0] data_read_tile_row_step_reg;
-    logic [ADDR_WIDTH-1:0] data_read_tile_base_addr_reg;
-    logic [ADDR_WIDTH-1:0] data_read_row_wrap_step_reg;
+    logic [DATA_READ_ADDR_WIDTH-1:0] data_read_addr_reg;
+    logic [DATA_READ_ADDR_WIDTH-1:0] data_read_row_step_reg;
+    logic [DATA_READ_ADDR_WIDTH-1:0] data_read_plane_step_reg;
+    logic [DATA_READ_ADDR_WIDTH-1:0] data_read_tile_row_step_reg;
+    logic [DATA_READ_ADDR_WIDTH-1:0] data_read_tile_base_addr_reg;
+    logic [DATA_READ_ADDR_WIDTH-1:0] data_read_row_wrap_step_reg;
     logic [CONFIG_WIDTH-1:0] pad_row_calc;
     logic [CONFIG_WIDTH-1:0] pad_col_calc;
     logic tile_at_row_end_reg;
@@ -236,15 +239,14 @@ module Conv_Controller #(
                 if (tile_at_row_end_reg) begin
                     data_read_tile_base_addr_reg <= data_read_tile_base_addr_reg
                         + data_read_row_wrap_step_reg;
-                    data_read_addr_reg <= data_read_tile_base_addr_reg
-                        + data_read_row_wrap_step_reg;
                     tile_at_row_end_reg <= (pool_x_last_reg == 0);
                 end else begin
                     data_read_tile_base_addr_reg <= data_read_tile_base_addr_reg + 2;
-                    data_read_addr_reg <= data_read_tile_base_addr_reg + 2
-                        + ((input_channels_reg == 1) ? 2 : 0);
                     tile_at_row_end_reg <= (pool_x_reg + 1'b1 == pool_x_last_reg);
                 end
+            end else if (state == PREPARE_NEXT_TILE) begin
+                data_read_addr_reg <= data_read_tile_base_addr_reg
+                    + (reuse_horizontal ? 2 : 0);
             end else if (!setup_issued && weight_load_start && weight_load_ready) begin
                 data_read_tile_base_addr_reg <=
                     input_channel_reg * data_read_plane_step_reg
@@ -410,9 +412,13 @@ module Conv_Controller #(
                             // channel zero after finishing a tile.
                             setup_issued       <= (input_channels_reg == 1);
                             data_request_count <= 5'd0;
-                            state              <= SET_WEIGHT_DATA;
+                            state              <= PREPARE_NEXT_TILE;
                         end
                     end
+                end
+
+                PREPARE_NEXT_TILE: begin
+                    state <= SET_WEIGHT_DATA;
                 end
 
                 WRITE_DRAIN: begin

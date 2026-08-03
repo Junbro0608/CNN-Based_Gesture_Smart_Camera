@@ -12,7 +12,7 @@ module tb_CNN_400_imge;
 	localparam int TIMEOUT_CYCLES  = 12000000;
 
 	// Linux/Windows 공통으로 동작하도록 testbench 기준 상대경로를 사용한다.
-	localparam string MEM_BASE_DIR = "test_image";
+	localparam string MEM_BASE_DIR = "./testbench/test_image";
 
 	logic clk;
 	logic rst_n;
@@ -28,8 +28,14 @@ module tb_CNN_400_imge;
 	int err_count;
 	int pass_count;
 	int fail_count;
+	int person_pass_count;
+	int person_fail_count;
+	int nonperson_pass_count;
+	int nonperson_fail_count;
 	int total_done_count;
 	int case_seq;
+	real person_pass_percent;
+	real nonperson_pass_percent;
 
 	CNN_accelerator dut (
 		.sysclk   (clk),
@@ -147,9 +153,17 @@ module tb_CNN_400_imge;
 			if (result !== expected_result) begin
 				err_count = err_count + 1;
 				fail_count = fail_count + 1;
+				if (expected_result)
+					person_fail_count = person_fail_count + 1;
+				else
+					nonperson_fail_count = nonperson_fail_count + 1;
 				$display("[FAIL][%0d/%0d] %s | pred=%s exp=%s", case_seq, TOTAL_CASES, mem_path, pred_label, exp_label);
 			end else begin
 				pass_count = pass_count + 1;
+				if (expected_result)
+					person_pass_count = person_pass_count + 1;
+				else
+					nonperson_pass_count = nonperson_pass_count + 1;
 				$display("[PASS][%0d/%0d] %s | pred=%s exp=%s", case_seq, TOTAL_CASES, mem_path, pred_label, exp_label);
 			end
 
@@ -176,6 +190,10 @@ module tb_CNN_400_imge;
 		err_count = 0;
 		pass_count = 0;
 		fail_count = 0;
+		person_pass_count = 0;
+		person_fail_count = 0;
+		nonperson_pass_count = 0;
+		nonperson_fail_count = 0;
 		total_done_count = 0;
 		case_seq = 0;
 
@@ -197,6 +215,13 @@ module tb_CNN_400_imge;
 		$display("[TB] pass_count=%0d", pass_count);
 		$display("[TB] fail_count=%0d", fail_count);
 		$display("[TB] err_count=%0d", err_count);
+		person_pass_percent = (100.0 * person_pass_count) / PERSON_COUNT;
+		nonperson_pass_percent = (100.0 * nonperson_pass_count) / NONPERSON_COUNT;
+		$display("[TB] person: pass=%0d/%0d fail=%0d pass_rate=%0.2f%%",
+			person_pass_count, PERSON_COUNT, person_fail_count, person_pass_percent);
+		$display("[TB] nonperson: pass=%0d/%0d fail=%0d pass_rate=%0.2f%%",
+			nonperson_pass_count, NONPERSON_COUNT, nonperson_fail_count,
+			nonperson_pass_percent);
 
 		if ((err_count == 0) && (pass_count == TOTAL_CASES))
 			$display("\nALL TESTS PASSED (%0d cases)", TOTAL_CASES);
