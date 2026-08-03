@@ -1,0 +1,11 @@
+open_project Dram_controller.xpr
+reset_run synth_1
+launch_runs synth_1 -jobs 8
+wait_on_run synth_1
+reset_run impl_1
+launch_runs impl_1 -jobs 8
+wait_on_run impl_1
+open_run impl_1
+report_timing_summary -file timing_summary_current.rpt
+report_timing -max_paths 10 -file timing_paths_current.rpt
+exit
