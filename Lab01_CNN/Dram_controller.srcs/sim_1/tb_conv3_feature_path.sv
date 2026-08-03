@@ -5,9 +5,12 @@ module tb_conv3_feature_path;
     localparam int IMG_WIDTH = 128;
     localparam int IMG_PIXELS = IMG_WIDTH * IMG_WIDTH;
     localparam int BUFFER_DEPTH = 64 * 64 * 16;
-    localparam int EXPECTED_CONV1_WRITES = 8 * 64 * 64;
-    localparam int EXPECTED_CONV2_WRITES = 8 * 32 * 32;
-    localparam int EXPECTED_CONV3_WRITES = 8 * 16 * 16;
+    localparam int CONV1_OUTPUT_PIXELS = 64 * 64;
+    localparam int CONV2_OUTPUT_PIXELS = 32 * 32;
+    localparam int CONV3_OUTPUT_PIXELS = 16 * 16;
+    localparam int EXPECTED_CONV1_WRITES = CONV1_OUTPUT_PIXELS;
+    localparam int EXPECTED_CONV2_WRITES = CONV2_OUTPUT_PIXELS;
+    localparam int EXPECTED_CONV3_WRITES = CONV3_OUTPUT_PIXELS;
 
     logic clk;
     logic rst_n;
@@ -23,6 +26,10 @@ module tb_conv3_feature_path;
     logic w_sel;
     logic [31:0] waddr;
     logic signed [7:0] wdata;
+    logic packed_we;
+    logic packed_w_sel;
+    logic [31:0] packed_waddr;
+    logic [63:0] packed_wdata;
     logic weight_ren;
     logic [31:0] weight_addr;
     logic [63:0] weight_rdata;
@@ -43,6 +50,8 @@ module tb_conv3_feature_path;
     integer image_index;
     integer buffer_index;
     integer cycle_count;
+    integer ch_index;
+    integer plane_pixels;
 
     conv #(
         .NUM_CH(8),
@@ -52,6 +61,7 @@ module tb_conv3_feature_path;
         .LAYER0_OUTPUT_CHANNELS(8),
         .LAYER1_OUTPUT_CHANNELS(8),
         .LAYER2_OUTPUT_CHANNELS(8),
+        .PACKED_WRITE_EN(1'b1),
         .ENABLE_STANDALONE_POOL(1'b0)
     ) dut (
         .clk         (clk),
@@ -68,6 +78,10 @@ module tb_conv3_feature_path;
         .w_sel       (w_sel),
         .wAddr       (waddr),
         .wData       (wdata),
+        .packed_we   (packed_we),
+        .packed_w_sel(packed_w_sel),
+        .packed_wAddr(packed_waddr),
+        .packed_wData(packed_wdata),
         .weight_ren  (weight_ren),
         .weight_addr (weight_addr),
         .weight_rdata(weight_rdata)
@@ -119,26 +133,43 @@ module tb_conv3_feature_path;
         end
 
         if (we) begin
-            if (w_sel)
-                buffer_b[waddr] <= wdata;
-            else
-                buffer_a[waddr] <= wdata;
+            error_count <= error_count + 1;
+        end
+
+        if (packed_we) begin
+            case (dut.layer_index)
+                0: plane_pixels = CONV1_OUTPUT_PIXELS;
+                1: plane_pixels = CONV2_OUTPUT_PIXELS;
+                default: plane_pixels = CONV3_OUTPUT_PIXELS;
+            endcase
+
+            for (ch_index = 0; ch_index < 8; ch_index = ch_index + 1) begin
+                if (packed_w_sel)
+                    buffer_b[packed_waddr + (ch_index * plane_pixels)]
+                        <= $signed(packed_wdata[ch_index*8 +: 8]);
+                else
+                    buffer_a[packed_waddr + (ch_index * plane_pixels)]
+                        <= $signed(packed_wdata[ch_index*8 +: 8]);
+            end
 
             case (dut.layer_index)
                 0: begin
                     conv1_write_count <= conv1_write_count + 1;
-                    if ($signed(wdata) !== 8'sd3)
-                        error_count <= error_count + 1;
+                    for (ch_index = 0; ch_index < 8; ch_index = ch_index + 1)
+                        if ($signed(packed_wdata[ch_index*8 +: 8]) !== 8'sd3)
+                            error_count <= error_count + 1;
                 end
                 1: begin
                     conv2_write_count <= conv2_write_count + 1;
-                    if ($signed(wdata) !== 8'sd2)
-                        error_count <= error_count + 1;
+                    for (ch_index = 0; ch_index < 8; ch_index = ch_index + 1)
+                        if ($signed(packed_wdata[ch_index*8 +: 8]) !== 8'sd2)
+                            error_count <= error_count + 1;
                 end
                 default: begin
                     conv3_write_count <= conv3_write_count + 1;
-                    if ($signed(wdata) !== 8'sd4)
-                        error_count <= error_count + 1;
+                    for (ch_index = 0; ch_index < 8; ch_index = ch_index + 1)
+                        if ($signed(packed_wdata[ch_index*8 +: 8]) !== 8'sd4)
+                            error_count <= error_count + 1;
                 end
             endcase
         end
@@ -214,7 +245,7 @@ module tb_conv3_feature_path;
         end
 
         if (error_count == 0)
-            $display("PASS: Conv3 feature path wrote %0d values of 4", EXPECTED_CONV3_WRITES);
+            $display("PASS: Conv3 feature path wrote %0d packed vectors of 4", EXPECTED_CONV3_WRITES);
         else
             $display("FAIL: Conv3 feature path errors=%0d", error_count);
         $finish;

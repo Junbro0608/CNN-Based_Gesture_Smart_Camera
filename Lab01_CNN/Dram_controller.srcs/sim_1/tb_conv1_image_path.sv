@@ -4,7 +4,8 @@ module tb_conv1_image_path;
 
     localparam int IMG_WIDTH = 128;
     localparam int IMG_PIXELS = IMG_WIDTH * IMG_WIDTH;
-    localparam int EXPECTED_WRITES = 8 * 64 * 64;
+    localparam int OUTPUT_PIXELS = 64 * 64;
+    localparam int EXPECTED_WRITES = OUTPUT_PIXELS;
     localparam logic signed [7:0] EXPECTED_VALUE = 8'sd3;
 
     logic clk;
@@ -21,6 +22,10 @@ module tb_conv1_image_path;
     logic w_sel;
     logic [31:0] waddr;
     logic signed [7:0] wdata;
+    logic packed_we;
+    logic packed_w_sel;
+    logic [31:0] packed_waddr;
+    logic [63:0] packed_wdata;
     logic weight_ren;
     logic [31:0] weight_addr;
     logic [63:0] weight_rdata;
@@ -35,6 +40,7 @@ module tb_conv1_image_path;
     integer error_count;
     integer image_index;
     integer cycle_count;
+    integer ch_index;
 
     conv #(
         .NUM_CH(8),
@@ -42,6 +48,7 @@ module tb_conv1_image_path;
         .INPUT_WIDTH(IMG_WIDTH),
         .INPUT_HEIGHT(IMG_WIDTH),
         .LAYER0_OUTPUT_CHANNELS(8),
+        .PACKED_WRITE_EN(1'b1),
         .ENABLE_STANDALONE_POOL(1'b0)
     ) dut (
         .clk         (clk),
@@ -58,6 +65,10 @@ module tb_conv1_image_path;
         .w_sel       (w_sel),
         .wAddr       (waddr),
         .wData       (wdata),
+        .packed_we   (packed_we),
+        .packed_w_sel(packed_w_sel),
+        .packed_wAddr(packed_waddr),
+        .packed_wData(packed_wdata),
         .weight_ren  (weight_ren),
         .weight_addr (weight_addr),
         .weight_rdata(weight_rdata)
@@ -99,11 +110,21 @@ module tb_conv1_image_path;
 
     always @(posedge clk) begin
         if (we) begin
+            error_count <= error_count + 1;
+            $display("[FAIL] legacy scalar write asserted in packed mode");
+        end
+
+        if (packed_we) begin
             write_count <= write_count + 1;
-            if ($signed(wdata) !== EXPECTED_VALUE) begin
-                error_count <= error_count + 1;
-                $display("[FAIL] write addr=%0d got=%0d exp=%0d", waddr,
-                         $signed(wdata), EXPECTED_VALUE);
+            for (ch_index = 0; ch_index < 8; ch_index = ch_index + 1) begin
+                if ($signed(packed_wdata[ch_index*8 +: 8])
+                    !== EXPECTED_VALUE) begin
+                    error_count <= error_count + 1;
+                    $display("[FAIL] packed write addr=%0d ch=%0d got=%0d exp=%0d",
+                             packed_waddr, ch_index,
+                             $signed(packed_wdata[ch_index*8 +: 8]),
+                             EXPECTED_VALUE);
+                end
             end
         end
     end
@@ -148,7 +169,7 @@ module tb_conv1_image_path;
         end
 
         if (error_count == 0)
-            $display("PASS: Conv1 image path wrote %0d values of %0d",
+            $display("PASS: Conv1 image path wrote %0d packed vectors of %0d",
                      write_count, EXPECTED_VALUE);
         else
             $display("FAIL: Conv1 image path errors=%0d", error_count);

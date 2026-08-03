@@ -1,0 +1,8 @@
+0.7
+2020.2
+Nov 18 2020
+09:47:47
+d:/git_clone/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/CNN_accelerator.sv,1785768090,systemVerilog,,,,CNN_accelerator;mux2;mux3,,,,,,,,
+d:/git_clone/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/Conv_Controller.sv,1785773160,systemVerilog,,d:/git_clone/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/conv.sv,,Conv_Controller,,,,,,,,
+d:/git_clone/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/Shift_Buffer.sv,1785772289,systemVerilog,,,,Shift_Buffer,,,,,,,,
+d:/git_clone/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/conv.sv,1785770521,systemVerilog,,d:/git_clone/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/CNN_accelerator.sv,,conv,,,,,,,,

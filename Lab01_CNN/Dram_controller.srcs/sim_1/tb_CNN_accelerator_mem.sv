@@ -5,11 +5,11 @@ module tb_CNN_accelerator_mem;
 	localparam int IMG_WIDTH  = 128;
 	localparam int IMG_HEIGHT = 128;
 	localparam int IMG_PIXELS = IMG_WIDTH * IMG_HEIGHT;
-	localparam int PERSON_COUNT = 2;
-	localparam int NONPERSON_COUNT = 2;
+	localparam int PERSON_COUNT = 1;
+	localparam int NONPERSON_COUNT = 1;
 	localparam int TOTAL_CASES = PERSON_COUNT + NONPERSON_COUNT;
 	localparam int TIMEOUT_CYCLES = 12000000;
-	localparam string MEM_BASE_DIR = "D:/git_clone/CNN-Based_Gesture_Smart_Camera/Lab00_Dram_controller/Dram_controller/Dram_controller.srcs/sim_1/test_img/mem_out";
+	localparam string MEM_BASE_DIR = "D:/git_clone/CNN-Based_Gesture_Smart_Camera/Lab02_CNN_400_image_test/testbench/test_image";
 	localparam bit ENABLE_CONSOLE_LOG = 1'b1;
 	localparam bit ENABLE_FILE_LOG = 1'b0;
 

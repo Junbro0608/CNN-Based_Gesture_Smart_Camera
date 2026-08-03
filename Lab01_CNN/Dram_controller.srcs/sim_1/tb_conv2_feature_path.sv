@@ -5,8 +5,10 @@ module tb_conv2_feature_path;
     localparam int IMG_WIDTH = 128;
     localparam int IMG_PIXELS = IMG_WIDTH * IMG_WIDTH;
     localparam int BUFFER_DEPTH = 64 * 64 * 16;
-    localparam int EXPECTED_CONV1_WRITES = 8 * 64 * 64;
-    localparam int EXPECTED_CONV2_WRITES = 8 * 32 * 32;
+    localparam int CONV1_OUTPUT_PIXELS = 64 * 64;
+    localparam int CONV2_OUTPUT_PIXELS = 32 * 32;
+    localparam int EXPECTED_CONV1_WRITES = CONV1_OUTPUT_PIXELS;
+    localparam int EXPECTED_CONV2_WRITES = CONV2_OUTPUT_PIXELS;
 
     logic clk;
     logic rst_n;
@@ -22,6 +24,10 @@ module tb_conv2_feature_path;
     logic w_sel;
     logic [31:0] waddr;
     logic signed [7:0] wdata;
+    logic packed_we;
+    logic packed_w_sel;
+    logic [31:0] packed_waddr;
+    logic [63:0] packed_wdata;
     logic weight_ren;
     logic [31:0] weight_addr;
     logic [63:0] weight_rdata;
@@ -41,6 +47,8 @@ module tb_conv2_feature_path;
     integer image_index;
     integer buffer_index;
     integer cycle_count;
+    integer ch_index;
+    integer plane_pixels;
 
     conv #(
         .NUM_CH(8),
@@ -49,6 +57,7 @@ module tb_conv2_feature_path;
         .INPUT_HEIGHT(IMG_WIDTH),
         .LAYER0_OUTPUT_CHANNELS(8),
         .LAYER1_OUTPUT_CHANNELS(8),
+        .PACKED_WRITE_EN(1'b1),
         .ENABLE_STANDALONE_POOL(1'b0)
     ) dut (
         .clk         (clk),
@@ -65,6 +74,10 @@ module tb_conv2_feature_path;
         .w_sel       (w_sel),
         .wAddr       (waddr),
         .wData       (wdata),
+        .packed_we   (packed_we),
+        .packed_w_sel(packed_w_sel),
+        .packed_wAddr(packed_waddr),
+        .packed_wData(packed_wdata),
         .weight_ren  (weight_ren),
         .weight_addr (weight_addr),
         .weight_rdata(weight_rdata)
@@ -107,25 +120,44 @@ module tb_conv2_feature_path;
             weight_rdata <= '0;
 
         if (we) begin
-            if (w_sel)
-                buffer_b[waddr] <= wdata;
-            else
-                buffer_a[waddr] <= wdata;
+            error_count <= error_count + 1;
+            if (error_count < 8)
+                $display("[FAIL] legacy scalar write asserted in packed mode");
+        end
+
+        if (packed_we) begin
+            plane_pixels = (dut.layer_index == 0)
+                ? CONV1_OUTPUT_PIXELS : CONV2_OUTPUT_PIXELS;
+
+            for (ch_index = 0; ch_index < 8; ch_index = ch_index + 1) begin
+                if (packed_w_sel)
+                    buffer_b[packed_waddr + (ch_index * plane_pixels)]
+                        <= $signed(packed_wdata[ch_index*8 +: 8]);
+                else
+                    buffer_a[packed_waddr + (ch_index * plane_pixels)]
+                        <= $signed(packed_wdata[ch_index*8 +: 8]);
+            end
 
             if (dut.layer_index == 0) begin
                 conv1_write_count <= conv1_write_count + 1;
-                if ($signed(wdata) !== 8'sd3) begin
-                    error_count <= error_count + 1;
-                    if (error_count < 8)
-                        $display("[FAIL] Conv1 addr=%0d got=%0d exp=3", waddr, $signed(wdata));
-                end
+                for (ch_index = 0; ch_index < 8; ch_index = ch_index + 1)
+                    if ($signed(packed_wdata[ch_index*8 +: 8]) !== 8'sd3) begin
+                        error_count <= error_count + 1;
+                        if (error_count < 8)
+                            $display("[FAIL] Conv1 addr=%0d ch=%0d got=%0d exp=3",
+                                     packed_waddr, ch_index,
+                                     $signed(packed_wdata[ch_index*8 +: 8]));
+                    end
             end else begin
                 conv2_write_count <= conv2_write_count + 1;
-                if ($signed(wdata) !== 8'sd1) begin
-                    error_count <= error_count + 1;
-                    if (error_count < 8)
-                        $display("[FAIL] Conv2 addr=%0d got=%0d exp=1", waddr, $signed(wdata));
-                end
+                for (ch_index = 0; ch_index < 8; ch_index = ch_index + 1)
+                    if ($signed(packed_wdata[ch_index*8 +: 8]) !== 8'sd1) begin
+                        error_count <= error_count + 1;
+                        if (error_count < 8)
+                            $display("[FAIL] Conv2 addr=%0d ch=%0d got=%0d exp=1",
+                                     packed_waddr, ch_index,
+                                     $signed(packed_wdata[ch_index*8 +: 8]));
+                    end
             end
         end
     end
@@ -193,7 +225,7 @@ module tb_conv2_feature_path;
         end
 
         if (error_count == 0)
-            $display("PASS: Conv2 feature path wrote %0d values of 1", EXPECTED_CONV2_WRITES);
+            $display("PASS: Conv2 feature path wrote %0d packed vectors of 1", EXPECTED_CONV2_WRITES);
         else
             $display("FAIL: Conv2 feature path errors=%0d", error_count);
         $finish;
