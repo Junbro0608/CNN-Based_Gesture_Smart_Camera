@@ -127,6 +127,7 @@ module Standalone_MaxPool #(
                         max_reg           <= '0;
                         sample_reg        <= '0;
                         read_channel_base_addr_reg <= '0;
+                        write_addr_reg    <= '0;
 
                         // Pool4 and Pool5 always use positive, even
                         // dimensions. Invalid configurations complete

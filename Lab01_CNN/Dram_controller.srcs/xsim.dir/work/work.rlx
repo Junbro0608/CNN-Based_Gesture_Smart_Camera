@@ -1,0 +1,23 @@
+0.7
+2020.2
+Nov 18 2020
+09:47:47
+D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sim_1/tb_conv1_image_path.sv,1785719094,systemVerilog,,,,tb_conv1_image_path,,,,,,,,
+D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sim_1/tb_conv2_feature_path.sv,1785720212,systemVerilog,,,,tb_conv2_feature_path,,,,,,,,
+D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sim_1/tb_conv3_feature_path.sv,1785720391,systemVerilog,,,,tb_conv3_feature_path,,,,,,,,
+D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sim_1/tb_padding_sync_latency.sv,1785718792,systemVerilog,,,,tb_padding_sync_latency,,,,,,,,
+D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sim_1/tb_pool4_feature_path.sv,1785720540,systemVerilog,,,,tb_pool4_feature_path,,,,,,,,
+D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/CH.sv,1785718041,systemVerilog,,D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/Conv_Controller.sv,,CH,,,,,,,,
+D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/CH_Result_Buffer.sv,1785718041,systemVerilog,,D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/CH_wrapper.sv,,CH_Result_Buffer,,,,,,,,
+D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/CH_wrapper.sv,1785718041,systemVerilog,,D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/CH.sv,,CH_wrapper,,,,,,,,
+D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/Conv_Controller.sv,1785718041,systemVerilog,,D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/conv.sv,,Conv_Controller,,,,,,,,
+D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/Feature_Buffer_Mux.sv,1785718041,systemVerilog,,D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/MaxPool_2x2.sv,,Feature_Buffer_Mux,,,,,,,,
+D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/MaxPool_2x2.sv,1785718041,systemVerilog,,D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/MaxPool_wrapper.sv,,MaxPool_2x2,,,,,,,,
+D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/MaxPool_wrapper.sv,1785718041,systemVerilog,,D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/Output_Mux.sv,,MaxPool_wrapper,,,,,,,,
+D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/Output_Mux.sv,1785718041,systemVerilog,,D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/Shift_Buffer.sv,,Output_Mux,,,,,,,,
+D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/Shift_Buffer.sv,1785718041,systemVerilog,,D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/Standalone_MaxPool.sv,,Shift_Buffer,,,,,,,,
+D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/Weight_Loader.sv,1785718041,systemVerilog,,D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sim_1/tb_conv3_feature_path.sv,,Weight_Loader,,,,,,,,
+D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/conv.sv,1785718041,systemVerilog,,D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/Feature_Buffer_Mux.sv,,conv,,,,,,,,
+D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/requantize.sv,1785718041,systemVerilog,,D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/conv/CH_Result_Buffer.sv,,requantize;requantize_pipeline,,,,,,,,
+D:/hello/CNN-Based_Gesture_Smart_Camera/Lab02_CNN_400_image_test/src/conv/Standalone_MaxPool.sv,1785720557,systemVerilog,,D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sim_1/tb_pool4_feature_path.sv,,Standalone_MaxPool,,,,,,,,
+D:/hello/CNN-Based_Gesture_Smart_Camera/Lab02_CNN_400_image_test/src/padding.sv,1785720356,systemVerilog,,D:/hello/CNN-Based_Gesture_Smart_Camera/Lab01_CNN/Dram_controller.srcs/sources_1/CNN/requantize.sv,,padding,,,,,,,,

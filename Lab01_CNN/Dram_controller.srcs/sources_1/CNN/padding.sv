@@ -37,7 +37,12 @@ module padding #(
     logic [$clog2(DATA_ADDR_WIDTH)-1:0] padded_data_raddr_reg;
     logic [$clog2(IMG_ADDR_WIDH*IMG_ADDR_WIDH)-1:0] padded_img_raddr_reg;
     logic padded_img_select_reg;
+    logic padded_img_select_stage2;
+    logic padded_img_select_stage3;
     logic padded_data_valid_reg;
+    logic padded_data_valid_stage2;
+    logic padded_data_valid_stage3;
+    logic signed [IMG_DATA_WIDH-1:0] padded_img_rdata_reg;
 
     always_comb begin
         data_raddr_calc = '0;
@@ -122,12 +127,22 @@ module padding #(
             padded_data_raddr_reg <= '0;
             padded_img_raddr_reg  <= '0;
             padded_img_select_reg <= 1'b0;
+            padded_img_select_stage2 <= 1'b0;
+            padded_img_select_stage3 <= 1'b0;
             padded_data_valid_reg <= 1'b0;
+            padded_data_valid_stage2 <= 1'b0;
+            padded_data_valid_stage3 <= 1'b0;
+            padded_img_rdata_reg  <= '0;
         end else begin
             padded_data_raddr_reg <= data_raddr_calc;
             padded_img_raddr_reg  <= img_raddr_calc;
             padded_img_select_reg <= padded_img_select_calc;
+            padded_img_select_stage2 <= padded_img_select_reg;
+            padded_img_select_stage3 <= padded_img_select_stage2;
             padded_data_valid_reg <= padded_data_valid_calc;
+            padded_data_valid_stage2 <= padded_data_valid_reg;
+            padded_data_valid_stage3 <= padded_data_valid_stage2;
+            padded_img_rdata_reg  <= img_rdata;
         end
     end
 
@@ -136,9 +151,9 @@ module padding #(
         img_raddr  = padded_img_raddr_reg;
         conv_rdata = '0;
 
-        if (padded_img_select_reg)
-            conv_rdata = img_rdata[DATA_DATA_WIDTH-1:0];
-        else if (padded_data_valid_reg)
+        if (padded_img_select_stage3)
+            conv_rdata = padded_img_rdata_reg[DATA_DATA_WIDTH-1:0];
+        else if (padded_data_valid_stage3)
             conv_rdata = data_rdata;
 
         // Pool4/Pool5 retain their original one-cycle direct data-buffer
