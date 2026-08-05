@@ -377,7 +377,7 @@ module conv #(
                 packed_wdata_quantized[packed_ch];
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             conv_write_we_reg   <= 1'b0;
             conv_write_bank_reg <= 1'b0;
@@ -540,7 +540,7 @@ module conv #(
     // before start. One start executes one Conv layer, Pool4, or Pool5.
     // After every stage, done pulses and the FSM waits for the next start so
     // that the external controller can update the ping-pong/weight buffers.
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             cnn_state           <= CNN_IDLE;
             layer_index         <= 2'd0;
@@ -932,7 +932,7 @@ module conv #(
     // that Shift_Buffer consumes it.
     assign data_read_ready = !data_reg_valid || shift_pixel_ready;
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             data_read_pending <= 1'b0;
             data_read_pending_d <= 1'b0;

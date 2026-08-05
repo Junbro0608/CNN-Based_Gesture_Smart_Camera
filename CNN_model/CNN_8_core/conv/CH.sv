@@ -166,7 +166,7 @@ module CH #(
 
     // CH_Result_Buffer가 받을 준비가 되면 result_ready=1을 보냅니다.
     // --------------------------------------------------------
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             // 비동기 Active-Low Reset
             full_result  <= 32'sd0;

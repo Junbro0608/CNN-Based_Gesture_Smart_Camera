@@ -64,7 +64,7 @@ module tb_padding_sync_latency;
         img_rdata <= img_mem[img_raddr];
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             expected_valid_0 <= 1'b0;
             expected_valid_1 <= 1'b0;

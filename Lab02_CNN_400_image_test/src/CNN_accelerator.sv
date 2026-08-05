@@ -56,7 +56,7 @@ module CNN_accelerator #(
     logic                                      padding_en_reg;
     logic                                      img_MUX_sel;
     logic        [$clog2(DATA_ADDR_WIDTH)-1:0] padding_DATA_raddr;
-    logic        [$clog2(DATA_ADDR_WIDTH)-1:0] padding_img_raddr;
+    logic [$clog2(IMG_ADDR_WIDH*IMG_ADDR_WIDH)-1:0] padding_img_raddr;
     logic        [                        7:0] conv_tile_index;
     logic        [                        7:0] conv_pad_row;
     logic        [                        7:0] conv_pad_col;
@@ -85,6 +85,12 @@ module CNN_accelerator #(
     logic                                      pingpong_W_sel;
     logic        [$clog2(MAX_LAYER_WORDS)-1:0] WT_rAddr;
     logic signed [          WT_DATA_WIDTH-1:0] WT_rData;
+    logic                                      conv_w_sel_unused;
+    logic                                      conv_packed_we_unused;
+    logic                                      conv_packed_w_sel_unused;
+    logic        [$clog2(DATA_ADDR_WIDTH)-1:0] conv_packed_waddr_unused;
+    logic        [16*DATA_DATA_WIDTH-1:0]      conv_packed_wdata_unused;
+    logic                                      conv_weight_ren_unused;
 
     CNN_acc_controller U_CNN_acc_controller (
         .clk             (clk),
@@ -118,13 +124,16 @@ module CNN_accelerator #(
 
     //-----------------------------연산---------------------------------
     conv #(
-        .NUM_CH                (8),
+        .NUM_CH                (16),
         .NUM_LAYERS            (3),
         .INPUT_WIDTH           (128),
         .INPUT_HEIGHT          (128),
+        .DATA_ADDR_WIDTH       ($clog2(DATA_ADDR_WIDTH)),
+        .WEIGHT_ADDR_WIDTH     ($clog2(MAX_LAYER_WORDS)),
         .LAYER0_OUTPUT_CHANNELS(16),
         .LAYER1_OUTPUT_CHANNELS(32),
-        .LAYER2_OUTPUT_CHANNELS(64)
+        .LAYER2_OUTPUT_CHANNELS(64),
+        .WEIGHT_WORD_WIDTH     (WT_DATA_WIDTH)
     ) U_conv (
         .clk         (clk),
         .rst_n       (rst_n),
@@ -137,8 +146,14 @@ module CNN_accelerator #(
         .pad_row     (conv_pad_row),
         .pad_col     (conv_pad_col),
         .we          (conv_DATA_we),
+        .w_sel       (conv_w_sel_unused),
         .wAddr       (conv_DATA_waddr),
         .wData       (conv_DATA_wdata),
+        .packed_we   (conv_packed_we_unused),
+        .packed_w_sel(conv_packed_w_sel_unused),
+        .packed_wAddr(conv_packed_waddr_unused),
+        .packed_wData(conv_packed_wdata_unused),
+        .weight_ren  (conv_weight_ren_unused),
         .weight_addr (conv_WT_raddr),
         .weight_rdata(WT_rData)
     );
@@ -213,7 +228,7 @@ module CNN_accelerator #(
     // The registered padding address and this top-level address register give
     // Conv requests a three-cycle return latency. Pool4/5
     // direct reads and FC reads retain their original one-cycle latency.
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             padding_raddr_reg <= '0;
             padding_en_reg <= 1'b0;

@@ -28,7 +28,7 @@ module fc_output_buffer (
     output logic signed [31:0]       selected_accumulator_s32
 );
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             buffered_accumulator_0_s32 <= 32'sd0;
             buffered_accumulator_1_s32 <= 32'sd0;

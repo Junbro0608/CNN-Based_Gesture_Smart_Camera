@@ -122,7 +122,7 @@ module padding #(
         end
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             padded_data_raddr_reg <= '0;
             padded_img_raddr_reg  <= '0;

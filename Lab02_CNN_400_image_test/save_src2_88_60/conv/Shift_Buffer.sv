@@ -124,7 +124,7 @@ module Shift_Buffer #(
         endcase
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             state         <= CAPTURE_TILE;
             capture_count <= 5'd0;

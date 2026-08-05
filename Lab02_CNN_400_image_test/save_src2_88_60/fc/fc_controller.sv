@@ -104,7 +104,7 @@ module fc_controller #(
     assign current_output_index_extended = current_group_output_start_extended + quant_lane_index_extended;
     assign next_group_output_start_extended = current_group_output_start_extended + OUTPUT_GROUP_STEP;
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             current_state               <= S_IDLE;
             latched_input_length        <= {INPUT_INDEX_WIDTH{1'b0}};

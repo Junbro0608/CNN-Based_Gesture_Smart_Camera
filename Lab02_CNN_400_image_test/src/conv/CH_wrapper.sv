@@ -58,7 +58,7 @@ module CH_wrapper #(
     // window 3, not when that window merely enters the CH input stage.
     assign consumed_tile_done = &channel_mac_tile_done;
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             stage_pixel_valid <= 1'b0;
             stage_window_index <= 2'd0;

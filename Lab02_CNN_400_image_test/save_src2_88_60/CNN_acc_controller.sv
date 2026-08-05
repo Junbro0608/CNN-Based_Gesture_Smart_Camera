@@ -52,7 +52,7 @@ module CNN_acc_controller #(
 
     assign CONVFC_MUX_sel = memory_owner_fc;
 
-    always @(posedge clk or negedge rst_n) begin
+    always @(posedge clk) begin
         if (!rst_n) begin
             state <= IDLE;
             memory_owner_fc <= 1'b0;
@@ -64,7 +64,7 @@ module CNN_acc_controller #(
     end
 
     // done flag register: set by input done, clear by clr signal
-    always @(posedge clk or negedge rst_n) begin
+    always @(posedge clk) begin
         if (!rst_n) begin
             cnn_Done_reg   <= 1'b0;
             fc_Done_reg    <= 1'b0;

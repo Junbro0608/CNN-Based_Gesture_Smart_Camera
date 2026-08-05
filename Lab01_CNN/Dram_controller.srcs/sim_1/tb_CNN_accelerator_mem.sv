@@ -53,7 +53,7 @@ module tb_CNN_accelerator_mem;
 	end
 
 	// Capture the exact score used at FC decision timing.
-	always_ff @(posedge clk or negedge rst_n) begin
+	always_ff @(posedge clk) begin
 		if (!rst_n) begin
 			decision_score_s32 <= '0;
 			decision_score_valid <= 1'b0;

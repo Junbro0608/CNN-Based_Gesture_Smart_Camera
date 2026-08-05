@@ -64,7 +64,7 @@ module tb_CNN_accelerator_mem_all;
 		img_rdata <= img_mem[img_raddr];
 	end
 
-	always_ff @(posedge clk or negedge rst_n) begin
+	always_ff @(posedge clk) begin
 		if (!rst_n) begin
 			for (conv_stat_layer = 1; conv_stat_layer <= 3; conv_stat_layer = conv_stat_layer + 1) begin
 				conv_write_count[conv_stat_layer] <= 0;
@@ -91,7 +91,7 @@ module tb_CNN_accelerator_mem_all;
 	end
 
 	// Capture the exact score used at FC decision timing.
-	always_ff @(posedge clk or negedge rst_n) begin
+	always_ff @(posedge clk) begin
 		if (!rst_n) begin
 			decision_score_s32 <= '0;
 			decision_score_valid <= 1'b0;
@@ -107,7 +107,7 @@ module tb_CNN_accelerator_mem_all;
 		end
 	end
 
-	always_ff @(posedge clk or negedge rst_n) begin
+	always_ff @(posedge clk) begin
 		if (!rst_n) begin
 			fc1_write_count <= 0;
 			fc1_nonzero_count <= 0;

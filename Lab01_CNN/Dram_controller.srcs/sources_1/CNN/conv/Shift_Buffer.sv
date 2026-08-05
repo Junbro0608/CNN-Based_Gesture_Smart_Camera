@@ -62,7 +62,8 @@ module Shift_Buffer #(
     logic [TILE_X_WIDTH-1:0] cache_commit_tile_x;
 
     integer index;
-    integer cache_index;
+    integer load_cache_index;
+    integer cache_write_index;
     integer cache_init_index;
 
     assign pixel_ready = (capture_count < target_capture_count);
@@ -136,7 +137,7 @@ module Shift_Buffer #(
         endcase
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             capture_count <= 5'd0;
             available_window_count <= 3'd0;
@@ -167,10 +168,10 @@ module Shift_Buffer #(
                              + 2 + capture_count[0]] <= pixel_data;
                 end else if (reuse_vertical) begin
                     if (capture_count == 0) begin
-                        for (cache_index = 0; cache_index < 8;
-                             cache_index = cache_index + 1)
-                            tile_mem[cache_index] <=
-                                vertical_cache[tile_x_index][cache_index];
+                        for (load_cache_index = 0; load_cache_index < 8;
+                             load_cache_index = load_cache_index + 1)
+                            tile_mem[load_cache_index] <=
+                                vertical_cache[tile_x_index][load_cache_index];
                     end
                     tile_mem[8 + capture_count] <= pixel_data;
                 end else begin
@@ -223,19 +224,19 @@ module Shift_Buffer #(
 
     // Keep vertical cache updates in a dedicated register block so clear does
     // not drive the CE of the full cache bank.
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             for (cache_init_index = 0;
                 cache_init_index < MAX_TILE_COLUMNS;
                 cache_init_index = cache_init_index + 1)
-                for (cache_index = 0; cache_index < 8;
-                    cache_index = cache_index + 1)
-                    vertical_cache[cache_init_index][cache_index] <= '0;
+                for (cache_write_index = 0; cache_write_index < 8;
+                    cache_write_index = cache_write_index + 1)
+                    vertical_cache[cache_init_index][cache_write_index] <= '0;
         end else if (cache_commit_pending) begin
-            for (cache_index = 0; cache_index < 8;
-                cache_index = cache_index + 1)
-                vertical_cache[cache_commit_tile_x][cache_index] <=
-                    tile_mem[8 + cache_index];
+            for (cache_write_index = 0; cache_write_index < 8;
+                cache_write_index = cache_write_index + 1)
+                vertical_cache[cache_commit_tile_x][cache_write_index] <=
+                    tile_mem[8 + cache_write_index];
         end
     end
 

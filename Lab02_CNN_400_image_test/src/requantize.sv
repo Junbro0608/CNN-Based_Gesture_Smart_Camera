@@ -214,7 +214,7 @@ module requantize_pipeline #(
         end
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             acc_stage1 <= '0;
             mult_stage1 <= '0;

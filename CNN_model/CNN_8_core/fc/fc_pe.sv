@@ -25,7 +25,7 @@ module fc_pe (
     // signed 17-bit product를 accumulator 폭으로 명시적으로 부호 확장한다.
     assign product_s32 = {{15{product_s17[16]}}, product_s17};
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             accumulator_s32 <= 32'sd0;
             product_reg     <= 32'sd0;

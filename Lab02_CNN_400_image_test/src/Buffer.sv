@@ -1,3 +1,5 @@
+`timescale 1ns / 1ps
+
 module pingpongBuffer #(
     parameter ADDR_WIDTH = 128 * 128,
     parameter DATA_WIDTH = 12
@@ -100,11 +102,11 @@ module weight_mem #(
     input  logic [$clog2(MAX_LAYER_WORDS)-1:0] rAddr,
     output logic [             DATA_WIDTH-1:0] rData
 );
-    parameter CONV1_START_ADDR = 0;
-    parameter CONV2_START_ADDR = 26;
-    parameter CONV3_START_ADDR = 618;
-    parameter FC1_START_ADDR = 2954;
-    parameter FC2_START_ADDR = 11178;
+    localparam CONV1_START_ADDR = 0;
+    localparam CONV2_START_ADDR = 26;
+    localparam CONV3_START_ADDR = 618;
+    localparam FC1_START_ADDR = 2954;
+    localparam FC2_START_ADDR = 11178;
 
     logic [$clog2(WT_DEPTH)-1:0] decode_raddr;
 

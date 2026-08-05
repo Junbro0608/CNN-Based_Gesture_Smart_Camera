@@ -11,8 +11,10 @@ module tb_CNN_400_imge;
 	localparam int TOTAL_CASES     = PERSON_COUNT + NONPERSON_COUNT;
 	localparam int TIMEOUT_CYCLES  = 12000000;
 
-	// Linux/Windows 공통으로 동작하도록 testbench 기준 상대경로를 사용한다.
-	localparam string MEM_BASE_DIR = "./testbench/test_image";
+	// 실행 위치가 달라도 동작하도록 mem 경로 후보를 순차 시도한다.
+	localparam string MEM_BASE_DIR_0 = "../mem_out";
+	localparam string MEM_BASE_DIR_1 = "./mem_out";
+	localparam string MEM_BASE_DIR_2 = "./testbench/test_image";
 
 	logic clk;
 	logic rst_n;
@@ -34,8 +36,13 @@ module tb_CNN_400_imge;
 	int nonperson_fail_count;
 	int total_done_count;
 	int case_seq;
+	int eval_case_count;
+	int eval_person_count;
+	int eval_nonperson_count;
 	real person_pass_percent;
 	real nonperson_pass_percent;
+	integer case_score_s8 [0:TOTAL_CASES-1];
+	bit case_expected_person [0:TOTAL_CASES-1];
 
 	CNN_accelerator dut (
 		.sysclk   (clk),
@@ -133,6 +140,7 @@ module tb_CNN_400_imge;
 	);
 		bit load_ok;
 		bit done_ok;
+		int signed score_s8;
 		string pred_label;
 		string exp_label;
 		begin
@@ -147,6 +155,16 @@ module tb_CNN_400_imge;
 			wait_done(TIMEOUT_CYCLES, done_ok);
 			if (!done_ok)
 				return;
+
+			// FC 최종 score를 저장해 threshold sweep에서 재사용한다.
+			score_s8 = $signed(dut.U_FC.u_fc_core.quantized_result_s8);
+			case_score_s8[eval_case_count] = score_s8;
+			case_expected_person[eval_case_count] = expected_result;
+			eval_case_count = eval_case_count + 1;
+			if (expected_result)
+				eval_person_count = eval_person_count + 1;
+			else
+				eval_nonperson_count = eval_nonperson_count + 1;
 
 			pred_label = (result == 1'b1) ? "person" : "nonperson";
 
@@ -172,12 +190,136 @@ module tb_CNN_400_imge;
 		end
 	endtask
 
+	task automatic report_threshold_sweep;
+		int th;
+		int idx;
+		int tp;
+		int tn;
+		int fp;
+		int fn;
+		int best_th;
+		int best_tp;
+		int best_tn;
+		int best_fp;
+		int best_fn;
+		int best_correct;
+		real person_rate;
+		real nonperson_rate;
+		real balanced_acc;
+		real best_balanced_acc;
+		real best_person_rate;
+		real best_nonperson_rate;
+		real overall_acc;
+		real best_overall_acc;
+		bit expected_person;
+		bit pred_person;
+		begin
+			if ((eval_case_count == 0)
+				|| (eval_person_count == 0)
+				|| (eval_nonperson_count == 0)) begin
+				$display("[TB][SWEEP] skipped: insufficient evaluated cases (total=%0d person=%0d nonperson=%0d)",
+					eval_case_count, eval_person_count, eval_nonperson_count);
+				return;
+			end
+
+			best_th = 0;
+			best_tp = 0;
+			best_tn = 0;
+			best_fp = 0;
+			best_fn = 0;
+			best_correct = -1;
+			best_balanced_acc = -1.0;
+			best_person_rate = 0.0;
+			best_nonperson_rate = 0.0;
+			best_overall_acc = 0.0;
+
+			for (th = -128; th <= 127; th = th + 1) begin
+				tp = 0;
+				tn = 0;
+				fp = 0;
+				fn = 0;
+
+				for (idx = 0; idx < eval_case_count; idx = idx + 1) begin
+					expected_person = case_expected_person[idx];
+					pred_person = ($signed(case_score_s8[idx]) >= th);
+
+					if (expected_person) begin
+						if (pred_person)
+							tp = tp + 1;
+						else
+							fn = fn + 1;
+					end else begin
+						if (pred_person)
+							fp = fp + 1;
+						else
+							tn = tn + 1;
+					end
+				end
+
+				person_rate = (100.0 * tp) / eval_person_count;
+				nonperson_rate = (100.0 * tn) / eval_nonperson_count;
+				balanced_acc = (person_rate + nonperson_rate) / 2.0;
+				overall_acc = (100.0 * (tp + tn)) / eval_case_count;
+
+				if ((balanced_acc > best_balanced_acc)
+					|| ((balanced_acc == best_balanced_acc)
+						&& ((tp + tn) > best_correct))
+					|| ((balanced_acc == best_balanced_acc)
+						&& ((tp + tn) == best_correct)
+						&& ((th < best_th)))) begin
+					best_th = th;
+					best_tp = tp;
+					best_tn = tn;
+					best_fp = fp;
+					best_fn = fn;
+					best_correct = tp + tn;
+					best_balanced_acc = balanced_acc;
+					best_person_rate = person_rate;
+					best_nonperson_rate = nonperson_rate;
+					best_overall_acc = overall_acc;
+				end
+			end
+
+			$display("\n[TB][SWEEP] threshold optimization over %0d cases", eval_case_count);
+			$display("[TB][SWEEP] best_threshold_s8=%0d", best_th);
+			$display("[TB][SWEEP] person_rate=%0.2f%% nonperson_rate=%0.2f%% balanced_acc=%0.2f%% overall_acc=%0.2f%%",
+				best_person_rate, best_nonperson_rate, best_balanced_acc, best_overall_acc);
+			$display("[TB][SWEEP] confusion: TP=%0d FN=%0d TN=%0d FP=%0d",
+				best_tp, best_fn, best_tn, best_fp);
+		end
+	endtask
+
 	task automatic run_group(input string cls_name, input int count, input logic expected_result);
 		int idx;
+		int fd;
 		string mem_path;
+		string cand0;
+		string cand1;
+		string cand2;
 		begin
 			for (idx = 0; idx < count; idx = idx + 1) begin
-				mem_path = $sformatf("%s/%s%0d.mem", MEM_BASE_DIR, cls_name, idx);
+				cand0 = $sformatf("%s/%s%0d.mem", MEM_BASE_DIR_0, cls_name, idx);
+				cand1 = $sformatf("%s/%s%0d.mem", MEM_BASE_DIR_1, cls_name, idx);
+				cand2 = $sformatf("%s/%s%0d.mem", MEM_BASE_DIR_2, cls_name, idx);
+
+				mem_path = cand0;
+				fd = $fopen(cand0, "r");
+				if (fd != 0) begin
+					$fclose(fd);
+				end else begin
+					fd = $fopen(cand1, "r");
+					if (fd != 0) begin
+						mem_path = cand1;
+						$fclose(fd);
+					end else begin
+						fd = $fopen(cand2, "r");
+						if (fd != 0) begin
+							mem_path = cand2;
+							$fclose(fd);
+						end
+					end
+				end
+
 				run_case(mem_path, expected_result);
 			end
 		end
@@ -196,6 +338,9 @@ module tb_CNN_400_imge;
 		nonperson_fail_count = 0;
 		total_done_count = 0;
 		case_seq = 0;
+		eval_case_count = 0;
+		eval_person_count = 0;
+		eval_nonperson_count = 0;
 
 		clear_image_mem();
 
@@ -204,7 +349,7 @@ module tb_CNN_400_imge;
 		repeat (4) @(posedge clk);
 
 		$display("[TB] start full regression: %0d images", TOTAL_CASES);
-		$display("[TB] mem base dir = %s", MEM_BASE_DIR);
+		$display("[TB] mem base candidates = %s | %s | %s", MEM_BASE_DIR_0, MEM_BASE_DIR_1, MEM_BASE_DIR_2);
 		$display("[TB] clock = 125MHz (8ns)");
 
 		run_group("person", PERSON_COUNT, 1'b1);
@@ -222,6 +367,8 @@ module tb_CNN_400_imge;
 		$display("[TB] nonperson: pass=%0d/%0d fail=%0d pass_rate=%0.2f%%",
 			nonperson_pass_count, NONPERSON_COUNT, nonperson_fail_count,
 			nonperson_pass_percent);
+
+		report_threshold_sweep();
 
 		if ((err_count == 0) && (pass_count == TOTAL_CASES))
 			$display("\nALL TESTS PASSED (%0d cases)", TOTAL_CASES);

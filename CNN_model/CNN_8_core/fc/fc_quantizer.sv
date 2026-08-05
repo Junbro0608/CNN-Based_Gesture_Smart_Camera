@@ -16,7 +16,7 @@ module fc_quantizer #(
     // signed accumulator의 고정 상위 byte를 signed int8 raw pattern으로 사용한다.
     assign quantized_s8 = $signed(accumulator_s32[31:24]);
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             valid_out    <= 1'b0;
             quantized_u8 <= 8'd0;

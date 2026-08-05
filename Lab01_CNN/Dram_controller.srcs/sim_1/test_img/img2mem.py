@@ -6,13 +6,16 @@ from PIL import Image
 
 def find_workspace_root(start: Path):
 	for parent in [start, *start.parents]:
-		if (parent / "Lab01_AI_Detect_humen").exists():
+		if (parent / "Lab00_AI_Detect_humen").exists() or (parent / "Lab01_AI_Detect_humen").exists():
 			return parent
-	raise FileNotFoundError("Could not locate workspace root containing 'Lab01_AI_Detect_humen'.")
+	raise FileNotFoundError("Could not locate workspace root containing 'Lab00_AI_Detect_humen' or 'Lab01_AI_Detect_humen'.")
 
 
 ROOT_DIR = find_workspace_root(Path(__file__).resolve())
-VAL_DIR = ROOT_DIR / "Lab01_AI_Detect_humen" / "save_dataset" / "val"
+if (ROOT_DIR / "Lab00_AI_Detect_humen").exists():
+	VAL_DIR = ROOT_DIR / "Lab00_AI_Detect_humen" / "save_dataset" / "val"
+else:
+	VAL_DIR = ROOT_DIR / "Lab01_AI_Detect_humen" / "save_dataset" / "val"
 PERSON_DIR = VAL_DIR / "person"
 NON_PERSON_DIR = VAL_DIR / "non_person"
 
@@ -24,14 +27,26 @@ IMAGE_SIZE = (128, 128)
 def list_image_files(folder: Path):
 	files = []
 	for ext in ("*.jpg", "*.jpeg", "*.png", "*.bmp"):
-		files.extend(folder.glob(ext))
+		files.extend(folder.rglob(ext))
 	return sorted(files)
 
 
 def preprocess_to_int8(image_path: Path):
-	img = Image.open(image_path).convert("L").resize(IMAGE_SIZE, Image.Resampling.BILINEAR)
-	arr = np.asarray(img, dtype=np.uint8)
-	return (arr.astype(np.int16) - 128).astype(np.int8)
+	# Match inference path exactly:
+	# 1) Gray = (77*R + 150*G + 29*B + 128) >> 8
+	# 2) q_out = ((Gray * 127) + 128) >> 8  (range: 0..127)
+	img = Image.open(image_path).convert("RGB").resize(IMAGE_SIZE, Image.Resampling.BILINEAR)
+	rgb = np.asarray(img, dtype=np.uint16)
+	r = rgb[..., 0]
+	g = rgb[..., 1]
+	b = rgb[..., 2]
+
+	gray_sum = (77 * r) + (150 * g) + (29 * b) + 128
+	y = gray_sum >> 8
+
+	q_inter = (y * 127) + 128
+	q_out = (q_inter >> 8).astype(np.uint8)
+	return q_out.astype(np.int8)
 
 
 def write_mem_file(path: Path, int8_arr: np.ndarray):

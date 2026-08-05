@@ -96,7 +96,7 @@ module fc_core #(
 
     // Keep the controller FSM and requantize mux off the Data Buffer write
     // path. The synchronous RAM receives this stable registered command.
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             activation_reg         <= 8'sd0;
             weight_word_reg        <= 64'd0;
@@ -128,7 +128,7 @@ module fc_core #(
     // 기본 Weight depth 1280은 최대 128x128 구성의 2112 words보다 작다.
     // 외부 통합 전 실제 Buffer depth로 override하거나 팀 사양을 확정해야 한다.
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             result <= 1'b0;
         end else if (start_accept) begin

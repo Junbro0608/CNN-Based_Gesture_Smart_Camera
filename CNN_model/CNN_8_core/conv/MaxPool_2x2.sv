@@ -41,7 +41,7 @@ module MaxPool_2x2 #(
     assign relu_data =
         pool_data[DATA_WIDTH-1] ? {DATA_WIDTH{1'b0}} : pool_data;
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             max_reg   <= '0;
             conv_count <= 2'd0;

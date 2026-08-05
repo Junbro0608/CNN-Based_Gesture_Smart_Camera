@@ -228,7 +228,7 @@ module CNN_accelerator #(
     // The registered padding address and this top-level address register give
     // Conv requests a three-cycle return latency. Pool4/5
     // direct reads and FC reads retain their original one-cycle latency.
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             padding_raddr_reg <= '0;
             padding_en_reg <= 1'b0;

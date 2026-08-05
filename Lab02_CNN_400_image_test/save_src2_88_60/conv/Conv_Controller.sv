@@ -216,7 +216,7 @@ module Conv_Controller #(
         endcase
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             data_read_addr_reg <= '0;
             data_read_row_step_reg <= '0;
@@ -269,7 +269,7 @@ module Conv_Controller #(
         end
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             state                   <= IDLE;
             setup_issued            <= 1'b0;

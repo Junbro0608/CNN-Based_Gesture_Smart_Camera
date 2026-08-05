@@ -25,12 +25,14 @@ module conv #(
     parameter integer DATA_ADDR_WIDTH   = 32,
     parameter integer BUFFER_DATA_WIDTH = 8,
     parameter integer WEIGHT_ADDR_WIDTH = 32,
+    parameter integer WEIGHT_WORD_WIDTH = 64,
     parameter logic LAYER0_MAXPOOL_EN = 1'b1,
     parameter logic LAYER1_MAXPOOL_EN = 1'b1,
     parameter logic LAYER2_MAXPOOL_EN = 1'b1,
     parameter logic LAYER0_RELU_EN    = 1'b1,
     parameter logic LAYER1_RELU_EN    = 1'b1,
     parameter logic LAYER2_RELU_EN    = 1'b1,
+    parameter logic PACKED_WRITE_EN   = 1'b0,
     // Final 128x128 architecture executes Pool4 and Pool5 after Layer 3.
     // This may be disabled only by focused Conv-only testbenches.
     parameter logic ENABLE_STANDALONE_POOL = 1'b1,
@@ -60,12 +62,16 @@ module conv #(
     output logic                         w_sel,
     output logic [DATA_ADDR_WIDTH-1:0]   wAddr,
     output logic signed [BUFFER_DATA_WIDTH-1:0] wData,
+    output logic                         packed_we,
+    output logic                         packed_w_sel,
+    output logic [DATA_ADDR_WIDTH-1:0]   packed_wAddr,
+    output logic [NUM_CH*BUFFER_DATA_WIDTH-1:0] packed_wData,
 
     // External asynchronous-read 64-bit Weight Ping-Pong Buffer.
     // weight_addr is a 64-bit word address, not a byte address.
     output logic                         weight_ren,
     output logic [WEIGHT_ADDR_WIDTH-1:0] weight_addr,
-    input  logic [NUM_CH*8-1:0]          weight_rdata
+    input  logic [WEIGHT_WORD_WIDTH-1:0] weight_rdata
 );
 
     // Physical padded input of Conv Layer 1.
@@ -121,11 +127,17 @@ module conv #(
         NUM_CH * LAYER1_WRITE_PIXELS;
     localparam integer LAYER2_WRITE_GROUP_STRIDE =
         NUM_CH * LAYER2_WRITE_PIXELS;
-    localparam integer LAYER0_WEIGHT_GROUP_STRIDE = (1 * 9) + (NUM_CH / 2);
+    localparam integer WEIGHT_WORD_CH = WEIGHT_WORD_WIDTH / 8;
+    localparam integer WEIGHT_GROUP_SUBGROUPS = NUM_CH / WEIGHT_WORD_CH;
+    localparam integer LEGACY_BIAS_WORDS_PER_GROUP = WEIGHT_WORD_CH / 2;
+    localparam integer LAYER0_WEIGHT_GROUP_STRIDE =
+        WEIGHT_GROUP_SUBGROUPS * ((1 * 9) + LEGACY_BIAS_WORDS_PER_GROUP);
     localparam integer LAYER1_WEIGHT_GROUP_STRIDE =
-        (LAYER0_OUTPUT_CHANNELS * 9) + (NUM_CH / 2);
+        WEIGHT_GROUP_SUBGROUPS
+        * ((LAYER0_OUTPUT_CHANNELS * 9) + LEGACY_BIAS_WORDS_PER_GROUP);
     localparam integer LAYER2_WEIGHT_GROUP_STRIDE =
-        (LAYER1_OUTPUT_CHANNELS * 9) + (NUM_CH / 2);
+        WEIGHT_GROUP_SUBGROUPS
+        * ((LAYER1_OUTPUT_CHANNELS * 9) + LEGACY_BIAS_WORDS_PER_GROUP);
     localparam logic LAYER0_WRITE_GROUP_STRIDE_IS_POWER_OF_TWO =
         (LAYER0_WRITE_GROUP_STRIDE > 0)
         && ((LAYER0_WRITE_GROUP_STRIDE
@@ -187,6 +199,8 @@ module conv #(
     logic conv_write_bank_reg;
     logic [DATA_ADDR_WIDTH-1:0] conv_write_addr_reg;
     logic signed [BUFFER_DATA_WIDTH-1:0] conv_write_data_reg;
+    logic packed_write_we_reg;
+    logic [NUM_CH*BUFFER_DATA_WIDTH-1:0] packed_write_data_reg;
     logic conv_quant_valid;
     logic conv_meta_valid_stage1;
     logic conv_meta_valid_stage2;
@@ -238,10 +252,20 @@ module conv #(
 
     // Conv_Controller ↔ external Weight Buffer register bridge.
     logic controller_weight_load_start;
+    logic controller_weight_prefetch_start;
+    logic controller_weight_promote_prefetch;
     logic weight_load_ready;
     logic weight_valid;
+    logic weight_prefetch_busy;
+    logic weight_prefetch_valid;
     logic signed [7:0] weight_reg [0:NUM_CH-1][0:8];
     logic signed [31:0] bias_reg  [0:NUM_CH-1];
+    logic [CONFIG_WIDTH-1:0] next_input_channel;
+    logic controller_weight_load_start_r;
+    logic controller_weight_prefetch_start_r;
+    logic controller_weight_promote_prefetch_r;
+    logic [CONFIG_WIDTH-1:0] current_input_channel_r;
+    logic [CONFIG_WIDTH-1:0] next_input_channel_r;
 
     // Conv_Controller ↔ external Data Buffer register bridge.
     logic controller_data_read_enable;
@@ -262,6 +286,8 @@ module conv #(
     logic shift_pixel_ready;
     logic shift_clear;
     logic shift_reuse_horizontal;
+    logic shift_reuse_vertical;
+    logic [7:0] shift_tile_x_index;
     logic signed [7:0] pixel_window [0:8];
     logic shift_window_valid;
     logic shift_window_ready;
@@ -282,6 +308,7 @@ module conv #(
     logic [NUM_CH-1:0] result_conv_ready;
     logic result_buffer_clear;
     logic signed [31:0] result_output_data;
+    logic signed [31:0] result_output_data_vec [0:NUM_CH-1];
     logic result_output_valid;
     logic result_output_ready;
     logic result_output_done;
@@ -289,6 +316,10 @@ module conv #(
     logic [1:0] result_output_position;
     logic signed [31:0] ch_wdata;
     logic signed [7:0] conv_wdata_quantized;
+    logic [NUM_CH-1:0] packed_quant_valid_lane;
+    logic packed_quant_valid;
+    logic signed [7:0] packed_wdata_quantized [0:NUM_CH-1];
+    logic [NUM_CH*BUFFER_DATA_WIDTH-1:0] packed_write_data_next;
     logic [2:0] requantize_layer;
 
     logic controller_data_write_enable;
@@ -298,6 +329,7 @@ module conv #(
     logic [CONFIG_WIDTH-1:0] current_input_channel;
     logic [CONFIG_WIDTH-1:0] current_pool_x;
     logic [CONFIG_WIDTH-1:0] current_pool_y;
+    integer packed_ch;
     initial begin
         if ((NUM_CH <= 0)
             || (BUFFER_DATA_WIDTH < 8)
@@ -305,6 +337,8 @@ module conv #(
             || (INPUT_HEIGHT <= 0)
             || (NUM_LAYERS < 1)
             || (NUM_LAYERS > 3)
+            || ((WEIGHT_WORD_WIDTH % 8) != 0)
+            || ((NUM_CH % WEIGHT_WORD_CH) != 0)
             || (LAYER0_OUTPUT_CHANNELS <= 0)
             || ((LAYER0_OUTPUT_CHANNELS % NUM_CH) != 0)
             || ((NUM_LAYERS >= 2)
@@ -314,7 +348,7 @@ module conv #(
                 && ((LAYER2_OUTPUT_CHANNELS <= 0)
                     || ((LAYER2_OUTPUT_CHANNELS % NUM_CH) != 0)))) begin
             $error(
-                "NUM_LAYERS must be 1..3, BUFFER_DATA_WIDTH must be >=8, and NUM_CH must divide every active output-channel count"
+                "NUM_LAYERS must be 1..3, BUFFER_DATA_WIDTH must be >=8, WEIGHT_WORD_WIDTH must be byte-aligned, NUM_CH must be a multiple of the weight-word channel count, and NUM_CH must divide every active output-channel count"
             );
         end
     end
@@ -340,17 +374,31 @@ module conv #(
 
     // Pipeline the complete write command so layer configuration, result
     // selection, and requantization do not directly drive the feature BRAM.
-    assign conv_we    = conv_write_we_reg;
+    assign conv_we    = PACKED_WRITE_EN ? 1'b0 : conv_write_we_reg;
     assign conv_w_sel = conv_write_bank_reg;
     assign conv_wAddr = conv_write_addr_reg;
     assign conv_wData = conv_write_data_reg;
+    assign packed_we    = PACKED_WRITE_EN ? packed_write_we_reg : 1'b0;
+    assign packed_w_sel = conv_write_bank_reg;
+    assign packed_wAddr = conv_write_addr_reg;
+    assign packed_wData = packed_write_data_reg;
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_comb begin
+        packed_write_data_next = '0;
+        for (packed_ch = 0; packed_ch < NUM_CH; packed_ch = packed_ch + 1)
+            packed_write_data_next[packed_ch*BUFFER_DATA_WIDTH +:
+                                   BUFFER_DATA_WIDTH] =
+                packed_wdata_quantized[packed_ch];
+    end
+
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             conv_write_we_reg   <= 1'b0;
             conv_write_bank_reg <= 1'b0;
             conv_write_addr_reg <= '0;
             conv_write_data_reg <= '0;
+            packed_write_we_reg <= 1'b0;
+            packed_write_data_reg <= '0;
             conv_meta_valid_stage1 <= 1'b0;
             conv_meta_valid_stage2 <= 1'b0;
             conv_meta_valid_stage3 <= 1'b0;
@@ -387,6 +435,10 @@ module conv #(
             conv_write_bank_reg <= conv_meta_bank_stage5;
             conv_write_addr_reg <= conv_meta_addr_stage5;
             conv_write_data_reg <= conv_wdata_quantized;
+            packed_write_we_reg <=
+                packed_quant_valid && conv_meta_valid_stage5;
+            if (packed_quant_valid && conv_meta_valid_stage5)
+                packed_write_data_reg <= packed_write_data_next;
         end
     end
 
@@ -398,6 +450,32 @@ module conv #(
         endcase
     end
 
+    always_comb begin
+        next_input_channel = current_input_channel;
+        if (current_input_channel + 1'b1 < active_cfg_input_channels)
+            next_input_channel = current_input_channel + 1'b1;
+    end
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            controller_weight_load_start_r <= 1'b0;
+            controller_weight_prefetch_start_r <= 1'b0;
+            controller_weight_promote_prefetch_r <= 1'b0;
+            current_input_channel_r <= '0;
+            next_input_channel_r <= '0;
+        end else begin
+            // Register this module boundary to shorten controller->loader
+            // setup paths through the Weight_Loader combinational logic.
+            controller_weight_load_start_r <= controller_weight_load_start;
+            controller_weight_prefetch_start_r <=
+                controller_weight_prefetch_start;
+            controller_weight_promote_prefetch_r <=
+                controller_weight_promote_prefetch;
+            current_input_channel_r <= current_input_channel;
+            next_input_channel_r <= next_input_channel;
+        end
+    end
+
     requantize_pipeline U_REQUANTIZE_CONV_WRITE (
         .clk     (clk),
         .rst_n   (rst_n),
@@ -407,6 +485,24 @@ module conv #(
         .out_valid(conv_quant_valid),
         .quant_out(conv_wdata_quantized)
     );
+
+    generate
+        genvar packed_quant_ch;
+        for (packed_quant_ch = 0; packed_quant_ch < NUM_CH;
+             packed_quant_ch = packed_quant_ch + 1) begin : GEN_PACKED_REQUANT
+            requantize_pipeline U_REQUANTIZE_PACKED_WRITE (
+                .clk     (clk),
+                .rst_n   (rst_n),
+                .in_valid(controller_data_write_enable),
+                .layer   (requantize_layer),
+                .acc_in  (result_output_data_vec[packed_quant_ch]),
+                .out_valid(packed_quant_valid_lane[packed_quant_ch]),
+                .quant_out(packed_wdata_quantized[packed_quant_ch])
+            );
+        end
+    endgenerate
+
+    assign packed_quant_valid = packed_quant_valid_lane[0];
 
     // Select the run-time configuration for the active layer.
     always_comb begin
@@ -478,7 +574,7 @@ module conv #(
     // before start. One start executes one Conv layer, Pool4, or Pool5.
     // After every stage, done pulses and the FSM waits for the next start so
     // that the external controller can update the ping-pong/weight buffers.
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             cnn_state           <= CNN_IDLE;
             layer_index         <= 2'd0;
@@ -667,17 +763,23 @@ module conv #(
     Weight_Loader #(
         .NUM_CH      (NUM_CH),
         .ADDR_WIDTH  (WEIGHT_ADDR_WIDTH),
-        .CONFIG_WIDTH(CONFIG_WIDTH)
+        .CONFIG_WIDTH(CONFIG_WIDTH),
+        .WEIGHT_WORD_WIDTH(WEIGHT_WORD_WIDTH)
     ) U_WEIGHT_LOADER (
         .clk                (clk),
         .rst_n              (rst_n),
-        .load_start         (controller_weight_load_start),
+        .load_start         (controller_weight_load_start_r),
+        .prefetch_start     (controller_weight_prefetch_start_r),
+        .promote_prefetch   (controller_weight_promote_prefetch_r),
         .load_ready         (weight_load_ready),
         .busy               (),
         .weight_valid       (weight_valid),
+        .prefetch_busy      (weight_prefetch_busy),
+        .prefetch_valid     (weight_prefetch_valid),
         .input_channels     (active_cfg_input_channels),
         .group_base_address (active_cfg_weight_group_base_addr),
-        .input_channel_index(current_input_channel),
+        .input_channel_index(current_input_channel_r),
+        .prefetch_channel_index(next_input_channel_r),
         .wt_ren             (weight_ren),
         .wt_raddr           (weight_addr),
         .wt_rdata           (weight_rdata),
@@ -703,8 +805,12 @@ module conv #(
         .busy                   (conv_busy),
         .done                   (conv_done),
         .weight_load_start      (controller_weight_load_start),
+        .weight_prefetch_start  (controller_weight_prefetch_start),
+        .weight_promote_prefetch(controller_weight_promote_prefetch),
         .weight_load_ready      (weight_load_ready),
         .weight_valid           (weight_valid),
+        .weight_prefetch_busy   (weight_prefetch_busy),
+        .weight_prefetch_valid  (weight_prefetch_valid),
         .data_read_enable       (controller_data_read_enable),
         .data_read_ready        (data_read_ready),
         .data_read_bank         (controller_data_read_bank),
@@ -718,6 +824,8 @@ module conv #(
         .shift_tile_done        (ch_consumed_tile_done),
         .shift_clear            (shift_clear),
         .shift_reuse_horizontal (shift_reuse_horizontal),
+        .shift_reuse_vertical   (shift_reuse_vertical),
+        .shift_tile_x_index     (shift_tile_x_index),
         .ch_enable              (ch_enable),
         .acc_clear              (acc_clear),
         .first_ic               (first_ic),
@@ -784,12 +892,16 @@ module conv #(
     );
 
     Shift_Buffer #(
-        .PIXEL_WIDTH(8)
+        .PIXEL_WIDTH(8),
+        .TILE_X_WIDTH(8),
+        .MAX_TILE_COLUMNS(INPUT_WIDTH)
     ) U_SHIFT_BUFFER (
         .clk         (clk),
         .rst_n       (rst_n),
         .clear       (shift_clear),
         .reuse_horizontal(shift_reuse_horizontal),
+        .reuse_vertical(shift_reuse_vertical),
+        .tile_x_index(shift_tile_x_index),
         .pixel_data  (data_reg),
         .pixel_valid (data_reg_valid),
         .pixel_ready (shift_pixel_ready),
@@ -826,7 +938,8 @@ module conv #(
 
     CH_Result_Buffer #(
         .NUM_CH    (NUM_CH),
-        .DATA_WIDTH(32)
+        .DATA_WIDTH(32),
+        .PACKED_OUTPUT(PACKED_WRITE_EN)
     ) U_CH_RESULT_BUFFER (
         .clk            (clk),
         .rst_n          (rst_n),
@@ -837,6 +950,7 @@ module conv #(
         .conv_valid     (conv_result_valid),
         .conv_ready     (result_conv_ready),
         .output_data    (result_output_data),
+        .output_data_vec(result_output_data_vec),
         .output_valid   (result_output_valid),
         .output_ready   (result_output_ready),
         .output_channel (result_output_channel),
@@ -853,7 +967,7 @@ module conv #(
     // that Shift_Buffer consumes it.
     assign data_read_ready = !data_reg_valid || shift_pixel_ready;
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             data_read_pending <= 1'b0;
             data_read_pending_d <= 1'b0;

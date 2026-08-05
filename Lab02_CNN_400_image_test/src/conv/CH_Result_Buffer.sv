@@ -10,6 +10,7 @@
 module CH_Result_Buffer #(
     parameter integer NUM_CH = 8,
     parameter integer DATA_WIDTH = 8,
+    parameter logic PACKED_OUTPUT = 1'b0,
     parameter integer CH_INDEX_WIDTH =
         (NUM_CH <= 1) ? 1 : $clog2(NUM_CH)
 ) (
@@ -25,6 +26,7 @@ module CH_Result_Buffer #(
     output logic [NUM_CH-1:0]            conv_ready,
 
     output logic signed [DATA_WIDTH-1:0]  output_data,
+    output logic signed [DATA_WIDTH-1:0]  output_data_vec [0:NUM_CH-1],
     output logic                          output_valid,
     input  logic                          output_ready,
     output logic [CH_INDEX_WIDTH-1:0]     output_channel,
@@ -51,10 +53,13 @@ module CH_Result_Buffer #(
     logic capture_fire;
     logic output_fire;
     logic signed [DATA_WIDTH-1:0] selected_data;
+    localparam logic [CH_INDEX_WIDTH-1:0] LAST_OUTPUT_CHANNEL =
+        NUM_CH - 1;
 
     integer capture_ch;
     integer reset_ch;
     integer reset_pos;
+    integer output_ch;
 
     assign all_conv_valid = &conv_valid;
     assign conv_ready =
@@ -64,31 +69,36 @@ module CH_Result_Buffer #(
         (state == CAPTURE_RESULTS) && all_conv_valid;
 
     assign output_valid    = (state == OUTPUT_RESULTS);
-    assign output_channel  = output_channel_reg;
+    assign output_channel  = PACKED_OUTPUT
+        ? LAST_OUTPUT_CHANNEL : output_channel_reg;
     assign output_position = output_position_reg;
     assign output_fire     = output_valid && output_ready;
 
     assign output_done =
         output_fire
-        && (output_channel_reg == NUM_CH-1)
+        && (PACKED_OUTPUT
+            || (output_channel_reg == NUM_CH-1))
         && (MaxPool_en_reg || (output_position_reg == 2'd3));
 
     // Select either one stored convolution result or the signed maximum of
     // all four results for the currently selected output channel.
     always_comb begin
-        selected_data =
-            conv_mem[output_position_reg][output_channel_reg];
+        for (output_ch = 0; output_ch < NUM_CH; output_ch = output_ch + 1) begin
+            selected_data = conv_mem[output_position_reg][output_ch];
 
-        if (MaxPool_en_reg)
-            selected_data = pool_max_mem[output_channel_reg];
+            if (MaxPool_en_reg)
+                selected_data = pool_max_mem[output_ch];
 
-        if (Relu_en_reg && selected_data[DATA_WIDTH-1])
-            output_data = '0;
-        else
-            output_data = selected_data;
+            if (Relu_en_reg && selected_data[DATA_WIDTH-1])
+                output_data_vec[output_ch] = '0;
+            else
+                output_data_vec[output_ch] = selected_data;
+        end
+
+        output_data = output_data_vec[output_channel_reg];
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             state              <= CAPTURE_RESULTS;
             capture_position   <= 2'd0;
@@ -148,7 +158,17 @@ module CH_Result_Buffer #(
 
                 OUTPUT_RESULTS: begin
                     if (output_fire) begin
-                        if (output_channel_reg == NUM_CH-1) begin
+                        if (PACKED_OUTPUT) begin
+                            if (MaxPool_en_reg
+                                || (output_position_reg == 2'd3)) begin
+                                output_position_reg <= 2'd0;
+                                state <= CAPTURE_RESULTS;
+                            end else begin
+                                output_position_reg <=
+                                    output_position_reg + 1'b1;
+                                state <= OUTPUT_RESULTS;
+                            end
+                        end else if (output_channel_reg == NUM_CH-1) begin
                             output_channel_reg <= '0;
 
                             if (MaxPool_en_reg

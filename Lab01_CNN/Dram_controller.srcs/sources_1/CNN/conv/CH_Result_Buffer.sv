@@ -98,7 +98,7 @@ module CH_Result_Buffer #(
         output_data = output_data_vec[output_channel_reg];
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             state              <= CAPTURE_RESULTS;
             capture_position   <= 2'd0;

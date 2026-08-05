@@ -28,8 +28,12 @@ module Conv_Controller #(
 
     // External Weight Buffer request and CNN-local register status.
     output logic                  weight_load_start,
+    output logic                  weight_prefetch_start,
+    output logic                  weight_promote_prefetch,
     input  logic                  weight_load_ready,
     input  logic                  weight_valid,
+    input  logic                  weight_prefetch_busy,
+    input  logic                  weight_prefetch_valid,
 
     // External Data Buffer request and Shift_Buffer status.
     output logic                  data_read_enable,
@@ -45,6 +49,8 @@ module Conv_Controller #(
     input  logic                  shift_tile_done,
     output logic                  shift_clear,
     output logic                  shift_reuse_horizontal,
+    output logic                  shift_reuse_vertical,
+    output logic [7:0]            shift_tile_x_index,
 
     // CH_wrapper control.
     output logic [NUM_CH-1:0] ch_enable,
@@ -88,6 +94,7 @@ module Conv_Controller #(
     state_t state;
 
     logic setup_issued;
+    logic waiting_for_prefetch;
     logic [4:0] data_request_count;
     logic [2:0] write_drain_count;
 
@@ -113,12 +120,17 @@ module Conv_Controller #(
     logic [ADDR_WIDTH-1:0] data_read_row_step_reg;
     logic [ADDR_WIDTH-1:0] data_read_plane_step_reg;
     logic [ADDR_WIDTH-1:0] data_read_tile_row_step_reg;
+    logic [ADDR_WIDTH-1:0] data_read_channel_base_addr_reg;
+    logic [ADDR_WIDTH-1:0] data_read_row_base_addr_reg;
     logic [ADDR_WIDTH-1:0] data_read_tile_base_addr_reg;
     logic [ADDR_WIDTH-1:0] data_read_row_wrap_step_reg;
     logic [CONFIG_WIDTH-1:0] pad_row_calc;
     logic [CONFIG_WIDTH-1:0] pad_col_calc;
+    logic [7:0] pool_x_coord;
+    logic [7:0] pool_y_coord;
     logic tile_at_row_end_reg;
     logic reuse_horizontal;
+    logic reuse_vertical;
     logic [4:0] reads_per_tile;
 
     assign input_channel_index = input_channel_reg;
@@ -126,16 +138,24 @@ module Conv_Controller #(
     assign pool_y_index        = pool_y_reg;
 
     always_comb begin
+        // Coordinate generation for padding never needs bits above 7:0.
+        pool_x_coord = pool_x_reg[7:0];
+        pool_y_coord = pool_y_reg[7:0];
         conv_width    = image_width_reg - 2;
         conv_height   = image_height_reg - 2;
-        reuse_horizontal = (input_channels_reg == 1) && (pool_x_reg != 0);
-        reads_per_tile = reuse_horizontal ? 5'd8 : 5'd16;
-        pad_row_calc  = (pool_y_reg << 1)
+        reuse_horizontal = (input_channels_reg == 1) && (pool_x_coord != 0);
+        reuse_vertical = (input_channels_reg == 1)
+            && (pool_x_coord == 0)
+            && (pool_y_coord != 0);
+        reads_per_tile = (reuse_horizontal || reuse_vertical) ? 5'd8 : 5'd16;
+        pad_row_calc  = (pool_y_coord << 1)
             + (reuse_horizontal ? data_request_count[2:1]
+               : reuse_vertical ? (2 + data_request_count[2])
                                 : data_request_count[3:2]);
-        pad_col_calc  = (pool_x_reg << 1)
+        pad_col_calc  = (pool_x_coord << 1)
             + (reuse_horizontal ? (2 + data_request_count[0])
-                                : data_request_count[1:0]);
+               : reuse_vertical ? data_request_count[1:0]
+               : data_request_count[1:0]);
     end
 
     always_comb begin
@@ -145,6 +165,8 @@ module Conv_Controller #(
         done = (state == DONE);
 
         weight_load_start = 1'b0;
+        weight_prefetch_start = 1'b0;
+        weight_promote_prefetch = 1'b0;
 
         data_read_enable = 1'b0;
         data_read_bank   = source_bank_reg;
@@ -155,6 +177,8 @@ module Conv_Controller #(
 
         shift_clear = 1'b0;
         shift_reuse_horizontal = reuse_horizontal;
+        shift_reuse_vertical = reuse_vertical;
+        shift_tile_x_index = pool_x_reg[7:0];
 
         ch_enable = {NUM_CH{1'b0}};
         acc_clear = 1'b0;
@@ -180,7 +204,10 @@ module Conv_Controller #(
             SET_WEIGHT_DATA: begin
                 ch_enable = {NUM_CH{1'b1}};
 
-                if (!setup_issued) begin
+                if (waiting_for_prefetch) begin
+                    if (weight_prefetch_valid)
+                        weight_promote_prefetch = 1'b1;
+                end else if (!setup_issued) begin
                     weight_load_start = 1'b1;
                     shift_clear       = 1'b1;
                 end else if (weight_valid
@@ -192,6 +219,10 @@ module Conv_Controller #(
 
             CONV: begin
                 ch_enable = {NUM_CH{1'b1}};
+                if ((input_channel_reg != input_channels_reg-1)
+                    && !weight_prefetch_valid
+                    && !weight_prefetch_busy)
+                    weight_prefetch_start = 1'b1;
             end
 
             POST_PROCESS: begin
@@ -213,12 +244,14 @@ module Conv_Controller #(
         endcase
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             data_read_addr_reg <= '0;
             data_read_row_step_reg <= '0;
             data_read_plane_step_reg <= '0;
             data_read_tile_row_step_reg <= '0;
+            data_read_channel_base_addr_reg <= '0;
+            data_read_row_base_addr_reg <= '0;
             data_read_tile_base_addr_reg <= '0;
             data_read_row_wrap_step_reg <= '0;
             tile_at_row_end_reg <= 1'b0;
@@ -228,36 +261,56 @@ module Conv_Controller #(
             data_read_tile_row_step_reg <= cfg_image_width << 1;
             data_read_row_wrap_step_reg <= (cfg_image_width << 1)
                 - ((((cfg_image_width - 2) >> 1) - 1'b1) << 1);
+            data_read_channel_base_addr_reg <= '0;
+            data_read_row_base_addr_reg <= '0;
+            data_read_tile_base_addr_reg <= '0;
+            data_read_addr_reg <= '0;
             tile_at_row_end_reg <= (((cfg_image_width - 2) >> 1) == 1);
         end else begin
-            if ((state == PUSH_DATA) && result_output_done
+            if ((state == CONV) && shift_tile_done
+                && (input_channel_reg != input_channels_reg-1)) begin
+                // Move to the next input-channel plane for the same tile.
+                data_read_channel_base_addr_reg <=
+                    data_read_channel_base_addr_reg + data_read_plane_step_reg;
+                data_read_tile_base_addr_reg <=
+                    data_read_tile_base_addr_reg + data_read_plane_step_reg;
+                data_read_addr_reg <=
+                    data_read_tile_base_addr_reg + data_read_plane_step_reg;
+            end else if ((state == PUSH_DATA) && result_output_done
                 && !((pool_x_reg == pool_x_last_reg)
                      && (pool_y_reg == pool_y_last_reg))) begin
                 if (tile_at_row_end_reg) begin
-                    data_read_tile_base_addr_reg <= data_read_tile_base_addr_reg
-                        + data_read_row_wrap_step_reg;
-                    data_read_addr_reg <= data_read_tile_base_addr_reg
-                        + data_read_row_wrap_step_reg;
+                    data_read_channel_base_addr_reg <= '0;
+                    data_read_row_base_addr_reg <=
+                        data_read_row_base_addr_reg + data_read_tile_row_step_reg;
+                    data_read_tile_base_addr_reg <=
+                        data_read_row_base_addr_reg + data_read_tile_row_step_reg;
+                    data_read_addr_reg <=
+                        data_read_row_base_addr_reg
+                        + data_read_tile_row_step_reg
+                        + ((input_channels_reg == 1)
+                           ? (image_width_reg << 1) : '0);
                     tile_at_row_end_reg <= (pool_x_last_reg == 0);
                 end else begin
-                    data_read_tile_base_addr_reg <= data_read_tile_base_addr_reg + 2;
-                    data_read_addr_reg <= data_read_tile_base_addr_reg + 2
+                    data_read_channel_base_addr_reg <= '0;
+                    data_read_tile_base_addr_reg <=
+                        data_read_row_base_addr_reg + ((pool_x_reg + 1'b1) << 1);
+                    data_read_addr_reg <=
+                        data_read_row_base_addr_reg + ((pool_x_reg + 1'b1) << 1)
                         + ((input_channels_reg == 1) ? 2 : 0);
                     tile_at_row_end_reg <= (pool_x_reg + 1'b1 == pool_x_last_reg);
                 end
             end else if (!setup_issued && weight_load_start && weight_load_ready) begin
-                data_read_tile_base_addr_reg <=
-                    input_channel_reg * data_read_plane_step_reg
-                    + (pool_y_reg * data_read_tile_row_step_reg)
-                    + (pool_x_reg << 1);
-                data_read_addr_reg <=
-                    input_channel_reg * data_read_plane_step_reg
-                    + (pool_y_reg * data_read_tile_row_step_reg)
-                    + (pool_x_reg << 1);
+                // setup_issued==0 occurs for channel0 at tile start. Address
+                // bases are already prepared by the state transitions above.
+                data_read_addr_reg <= data_read_tile_base_addr_reg;
             end else if (data_read_enable && data_read_ready) begin
                 if (reuse_horizontal && data_request_count[0])
                     data_read_addr_reg <=
                         data_read_addr_reg + image_width_reg - 1'b1;
+                else if (reuse_vertical && (data_request_count[1:0] == 2'd3))
+                    data_read_addr_reg <=
+                        data_read_addr_reg + data_read_row_step_reg;
                 else if (!reuse_horizontal && (data_request_count[1:0] == 2'd3))
                     data_read_addr_reg <=
                         data_read_addr_reg + data_read_row_step_reg;
@@ -267,10 +320,11 @@ module Conv_Controller #(
         end
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             state                   <= IDLE;
             setup_issued            <= 1'b0;
+            waiting_for_prefetch    <= 1'b0;
             data_request_count      <= 5'd0;
             write_drain_count       <= 2'd0;
             input_channel_reg       <= '0;
@@ -309,6 +363,7 @@ module Conv_Controller #(
                         pool_x_reg              <= '0;
                         pool_y_reg              <= '0;
                         setup_issued            <= 1'b0;
+                        waiting_for_prefetch    <= 1'b0;
                         data_request_count      <= 5'd0;
                         write_drain_count       <= 2'd0;
                         state                   <= SET_WEIGHT_DATA;
@@ -316,7 +371,12 @@ module Conv_Controller #(
                 end
 
                 SET_WEIGHT_DATA: begin
-                    if (!setup_issued) begin
+                    if (waiting_for_prefetch) begin
+                        if (weight_prefetch_valid) begin
+                            waiting_for_prefetch <= 1'b0;
+                            setup_issued <= 1'b1;
+                        end
+                    end else if (!setup_issued) begin
                         if (weight_load_start && weight_load_ready) begin
                             setup_issued <= 1'b1;
                         end
@@ -339,7 +399,9 @@ module Conv_Controller #(
                         end else begin
                             input_channel_reg <=
                                 input_channel_reg + 1'b1;
-                            setup_issued       <= 1'b0;
+                            waiting_for_prefetch <=
+                                !weight_prefetch_valid && weight_prefetch_busy;
+                            setup_issued       <= weight_prefetch_valid;
                             data_request_count <= 5'd0;
                             state              <= SET_WEIGHT_DATA;
                         end
@@ -409,6 +471,7 @@ module Conv_Controller #(
                             // spatial tile. Later layers reload for input
                             // channel zero after finishing a tile.
                             setup_issued       <= (input_channels_reg == 1);
+                            waiting_for_prefetch <= 1'b0;
                             data_request_count <= 5'd0;
                             state              <= SET_WEIGHT_DATA;
                         end
