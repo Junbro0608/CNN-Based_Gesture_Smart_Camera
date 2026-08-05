@@ -11,10 +11,8 @@ module tb_CNN_400_imge;
 	localparam int TOTAL_CASES     = PERSON_COUNT + NONPERSON_COUNT;
 	localparam int TIMEOUT_CYCLES  = 12000000;
 
-	// 실행 위치가 달라도 동작하도록 mem 경로 후보를 순차 시도한다.
-	localparam string MEM_BASE_DIR_0 = "../mem_out";
-	localparam string MEM_BASE_DIR_1 = "./mem_out";
-	localparam string MEM_BASE_DIR_2 = "./testbench/test_image";
+	// Lab02_CNN_400_image_test 루트에서 실행할 때 사용하는 mem 경로.
+	localparam string MEM_BASE_DIR = "./mem_out";
 
 	logic clk;
 	logic rst_n;
@@ -291,35 +289,10 @@ module tb_CNN_400_imge;
 
 	task automatic run_group(input string cls_name, input int count, input logic expected_result);
 		int idx;
-		int fd;
 		string mem_path;
-		string cand0;
-		string cand1;
-		string cand2;
 		begin
 			for (idx = 0; idx < count; idx = idx + 1) begin
-				cand0 = $sformatf("%s/%s%0d.mem", MEM_BASE_DIR_0, cls_name, idx);
-				cand1 = $sformatf("%s/%s%0d.mem", MEM_BASE_DIR_1, cls_name, idx);
-				cand2 = $sformatf("%s/%s%0d.mem", MEM_BASE_DIR_2, cls_name, idx);
-
-				mem_path = cand0;
-				fd = $fopen(cand0, "r");
-				if (fd != 0) begin
-					$fclose(fd);
-				end else begin
-					fd = $fopen(cand1, "r");
-					if (fd != 0) begin
-						mem_path = cand1;
-						$fclose(fd);
-					end else begin
-						fd = $fopen(cand2, "r");
-						if (fd != 0) begin
-							mem_path = cand2;
-							$fclose(fd);
-						end
-					end
-				end
-
+				mem_path = $sformatf("%s/%s%0d.mem", MEM_BASE_DIR, cls_name, idx);
 				run_case(mem_path, expected_result);
 			end
 		end
@@ -349,11 +322,11 @@ module tb_CNN_400_imge;
 		repeat (4) @(posedge clk);
 
 		$display("[TB] start full regression: %0d images", TOTAL_CASES);
-		$display("[TB] mem base candidates = %s | %s | %s", MEM_BASE_DIR_0, MEM_BASE_DIR_1, MEM_BASE_DIR_2);
+		$display("[TB] mem base dir = %s", MEM_BASE_DIR);
 		$display("[TB] clock = 125MHz (8ns)");
 
-		run_group("person", PERSON_COUNT, 1'b1);
 		run_group("nonperson", NONPERSON_COUNT, 1'b0);
+		run_group("person", PERSON_COUNT, 1'b1);
 
 		$display("\n[TB] SUMMARY");
 		$display("[TB] total_done_count=%0d", total_done_count);
