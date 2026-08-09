@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -a -o \"Synth 8-[0-9]*[^\\\\x01\\\\x02]\\\\{0,120\\\\}\" hw.runs/system_CNN_accelerator_1_0_synth_1/vivado.pb)",
+      "Bash(grep -a -o \"state[^\\\\x01\\\\x02\\\\\"]\\\\{0,80\\\\}\" hw.runs/system_CNN_accelerator_1_0_synth_1/vivado.pb)",
+      "Bash(python -)"
+    ]
+  }
+}

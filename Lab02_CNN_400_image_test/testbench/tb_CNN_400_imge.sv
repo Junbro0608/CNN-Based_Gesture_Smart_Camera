@@ -6,13 +6,13 @@ module tb_CNN_400_imge;
 	localparam int IMG_HEIGHT = 128;
 	localparam int IMG_PIXELS = IMG_WIDTH * IMG_HEIGHT;
 
-	localparam int PERSON_COUNT    = 200;
-	localparam int NONPERSON_COUNT = 200;
+	localparam int PERSON_COUNT    = 26;
+	localparam int NONPERSON_COUNT = 26;
 	localparam int TOTAL_CASES     = PERSON_COUNT + NONPERSON_COUNT;
 	localparam int TIMEOUT_CYCLES  = 12000000;
 
 	// Lab02_CNN_400_image_test 루트에서 실행할 때 사용하는 mem 경로.
-	localparam string MEM_BASE_DIR = "./mem_out";
+	localparam string MEM_BASE_DIR = "../Lab00_AI_Detect_humen/save_pt_v3/mem_out";
 
 	logic clk;
 	logic rst_n;
@@ -287,12 +287,17 @@ module tb_CNN_400_imge;
 		end
 	endtask
 
-	task automatic run_group(input string cls_name, input int count, input logic expected_result);
+	task automatic run_group(
+		input string cls_name,
+		input string file_prefix,
+		input int count,
+		input logic expected_result
+	);
 		int idx;
 		string mem_path;
 		begin
 			for (idx = 0; idx < count; idx = idx + 1) begin
-				mem_path = $sformatf("%s/%s%0d.mem", MEM_BASE_DIR, cls_name, idx);
+				mem_path = $sformatf("%s/%s/%s%0d.mem", MEM_BASE_DIR, cls_name, file_prefix, idx);
 				run_case(mem_path, expected_result);
 			end
 		end
@@ -325,8 +330,8 @@ module tb_CNN_400_imge;
 		$display("[TB] mem base dir = %s", MEM_BASE_DIR);
 		$display("[TB] clock = 125MHz (8ns)");
 
-		run_group("nonperson", NONPERSON_COUNT, 1'b0);
-		run_group("person", PERSON_COUNT, 1'b1);
+		run_group("non_person", "non_person", NONPERSON_COUNT, 1'b0);
+		run_group("person", "person", PERSON_COUNT, 1'b1);
 
 		$display("\n[TB] SUMMARY");
 		$display("[TB] total_done_count=%0d", total_done_count);

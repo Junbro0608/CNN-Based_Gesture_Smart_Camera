@@ -1,0 +1,58 @@
+timestamp=[2026-08-06 17:13:32], mode=WORKBENCH_START, duration=0:00:04.599, duration_ms=4599, data={}
+timestamp=[2026-08-06 17:13:32], mode=WORKBENCH_UI_INIT, duration=0:00:00.346, duration_ms=346, data={editors_count=0, platform_editors_count=0, projects_count=0, platform_projects_count=0, active_platform_editor=false, projects=}
+timestamp=[2026-08-06 17:13:35], mode=PLATFORM_REPOSITORY_INIT, duration=0:00:02.506, duration_ms=2506, data={}
+timestamp=[2026-08-06 17:15:50], mode=PLATFORM_GENERATION, duration=0:00:30.255, duration_ms=30255, data={name=pcam_gray128_platform}
+timestamp=[2026-08-06 17:16:17], mode=BUILD, duration=0:00:03.037, duration_ms=3037, data={name=pcam_gray128, configuration=Debug, clean_build=false}
+timestamp=[2026-08-06 17:16:27], mode=BUILD, duration=0:00:06.393, duration_ms=6393, data={name=pcam_gray128_system, configuration=Debug, clean_build=false}
+timestamp=[2026-08-06 17:18:11], mode=BUILD, duration=0:00:00.177, duration_ms=177, data={name=pcam_gray128, configuration=Debug, clean_build=true}
+timestamp=[2026-08-06 17:18:13], mode=BUILD, duration=0:00:02.268, duration_ms=2268, data={name=pcam_gray128, configuration=Debug, clean_build=false}
+timestamp=[2026-08-06 17:18:50], mode=PLATFORM_GENERATION, duration=0:00:01.384, duration_ms=1384, data={name=pcam_gray128_platform}
+timestamp=[2026-08-06 17:19:02], mode=BUILD, duration=0:00:00.244, duration_ms=244, data={name=pcam_gray128, configuration=Debug, clean_build=false}
+timestamp=[2026-08-06 17:19:07], mode=BUILD, duration=0:00:04.042, duration_ms=4042, data={name=pcam_gray128_system, configuration=Debug, clean_build=false}
+timestamp=[2026-08-06 17:22:08], mode=PLATFORM_GENERATION, duration=0:00:10.672, duration_ms=10672, data={name=pcam_gray128_platform}
+timestamp=[2026-08-06 17:22:22], mode=BUILD, duration=0:00:06.118, duration_ms=6118, data={name=pcam_gray128, configuration=Debug, clean_build=false}
+timestamp=[2026-08-06 17:22:34], mode=BUILD, duration=0:00:05.890, duration_ms=5890, data={name=pcam_gray128_system, configuration=Debug, clean_build=false}
+timestamp=[2026-08-06 17:23:59], mode=PLATFORM_GENERATION, duration=0:00:12.262, duration_ms=12262, data={name=pcam_gray128_platform}
+timestamp=[2026-08-06 17:24:08], mode=BUILD, duration=0:00:02.464, duration_ms=2464, data={name=pcam_gray128, configuration=Debug, clean_build=false}
+timestamp=[2026-08-06 17:24:16], mode=BUILD, duration=0:00:04.352, duration_ms=4352, data={name=pcam_gray128_system, configuration=Debug, clean_build=false}
+timestamp=[2026-08-06 17:25:21], mode=PLATFORM_GENERATION, duration=0:00:10.252, duration_ms=10252, data={name=pcam_gray128_platform}
+timestamp=[2026-08-06 17:25:25], mode=BUILD, duration=0:00:00.185, duration_ms=185, data={name=pcam_gray128, configuration=Debug, clean_build=true}
+timestamp=[2026-08-06 17:25:28], mode=BUILD, duration=0:00:02.333, duration_ms=2333, data={name=pcam_gray128, configuration=Debug, clean_build=false}
+timestamp=[2026-08-06 17:25:36], mode=BUILD, duration=0:00:04.236, duration_ms=4236, data={name=pcam_gray128_system, configuration=Debug, clean_build=false}
+timestamp=[2026-08-07 09:55:17], mode=WORKBENCH_START, duration=0:00:09.747, duration_ms=9747, data={}
+timestamp=[2026-08-07 09:55:18], mode=WORKBENCH_UI_INIT, duration=0:00:00.543, duration_ms=543, data={editors_count=0, platform_editors_count=0, projects_count=4, platform_projects_count=1, active_platform_editor=false, projects=RemoteSystemsTempFiles,pcam_gray128,pcam_gray128_platform,pcam_gray128_system}
+timestamp=[2026-08-07 09:55:18], mode=PLATFORM_REPOSITORY_INIT, duration=0:00:00.068, duration_ms=68, data={}
+timestamp=[2026-08-07 09:56:09], mode=PLATFORM_GENERATION, duration=0:00:15.710, duration_ms=15710, data={name=pcam_gray128_platform}
+timestamp=[2026-08-07 09:56:20], mode=BUILD, duration=0:00:05.098, duration_ms=5098, data={name=pcam_gray128, configuration=Debug, clean_build=false}
+timestamp=[2026-08-07 09:56:30], mode=BUILD, duration=0:00:05.238, duration_ms=5238, data={name=pcam_gray128_system, configuration=Debug, clean_build=false}
+timestamp=[2026-08-07 09:56:31], mode=BUILD, duration=0:00:00.195, duration_ms=195, data={name=pcam_gray128, configuration=Debug, clean_build=true}
+timestamp=[2026-08-07 09:56:33], mode=BUILD, duration=0:00:02.411, duration_ms=2411, data={name=pcam_gray128, configuration=Debug, clean_build=false}
+timestamp=[2026-08-07 10:01:08], mode=BUILD, duration=0:00:00.297, duration_ms=297, data={name=pcam_gray128, configuration=Debug, clean_build=false}
+timestamp=[2026-08-07 10:02:27], mode=BUILD, duration=0:00:00.162, duration_ms=162, data={name=pcam_gray128, configuration=Debug, clean_build=true}
+timestamp=[2026-08-07 10:02:29], mode=BUILD, duration=0:00:02.330, duration_ms=2330, data={name=pcam_gray128, configuration=Debug, clean_build=false}
+timestamp=[2026-08-07 10:18:50], mode=BUILD, duration=0:00:01.190, duration_ms=1190, data={name=pcam_gray128, configuration=Debug, clean_build=false}
+timestamp=[2026-08-07 10:19:17], mode=BUILD, duration=0:00:02.407, duration_ms=2407, data={name=pcam_gray128, configuration=Debug, clean_build=false}
+timestamp=[2026-08-07 10:24:47], mode=BUILD, duration=0:00:01.681, duration_ms=1681, data={name=pcam_gray128, configuration=Debug, clean_build=false}
+timestamp=[2026-08-07 10:27:28], mode=PLATFORM_GENERATION, duration=0:00:05.427, duration_ms=5427, data={name=pcam_gray128_platform}
+timestamp=[2026-08-07 10:27:28], mode=BUILD, duration=0:00:00.153, duration_ms=153, data={name=pcam_gray128, configuration=Debug, clean_build=true}
+timestamp=[2026-08-07 10:27:51], mode=PLATFORM_GENERATION, duration=0:00:18.537, duration_ms=18537, data={name=pcam_gray128_platform}
+timestamp=[2026-08-07 10:27:55], mode=BUILD, duration=0:00:03.658, duration_ms=3658, data={name=pcam_gray128, configuration=Debug, clean_build=false}
+timestamp=[2026-08-07 10:29:35], mode=BUILD, duration=0:00:01.607, duration_ms=1607, data={name=pcam_gray128, configuration=Debug, clean_build=false}
+timestamp=[2026-08-07 10:29:59], mode=PLATFORM_GENERATION, duration=0:00:04.853, duration_ms=4853, data={name=pcam_gray128_platform}
+timestamp=[2026-08-07 10:30:00], mode=BUILD, duration=0:00:00.153, duration_ms=153, data={name=pcam_gray128, configuration=Debug, clean_build=true}
+timestamp=[2026-08-07 10:30:21], mode=PLATFORM_GENERATION, duration=0:00:18.311, duration_ms=18311, data={name=pcam_gray128_platform}
+timestamp=[2026-08-07 10:30:24], mode=BUILD, duration=0:00:03.198, duration_ms=3198, data={name=pcam_gray128, configuration=Debug, clean_build=false}
+timestamp=[2026-08-07 10:32:05], mode=BUILD, duration=0:00:01.567, duration_ms=1567, data={name=pcam_gray128, configuration=Debug, clean_build=false}
+timestamp=[2026-08-07 15:38:41], mode=BUILD, duration=0:00:00.887, duration_ms=887, data={name=pcam_gray128, configuration=Debug, clean_build=false}
+timestamp=[2026-08-07 16:45:08], mode=PLATFORM_GENERATION, duration=0:00:16.908, duration_ms=16908, data={name=pcam_gray128_platform}
+timestamp=[2026-08-07 18:12:41], mode=PLATFORM_GENERATION, duration=0:00:01.912, duration_ms=1912, data={name=pcam_gray128_platform}
+timestamp=[2026-08-07 18:12:51], mode=PLATFORM_GENERATION, duration=0:00:05.238, duration_ms=5238, data={name=pcam_gray128_platform}
+timestamp=[2026-08-07 18:12:51], mode=BUILD, duration=0:00:00.174, duration_ms=174, data={name=pcam_gray128, configuration=Debug, clean_build=true}
+timestamp=[2026-08-07 18:13:22], mode=PLATFORM_GENERATION, duration=0:00:28.408, duration_ms=28408, data={name=pcam_gray128_platform}
+timestamp=[2026-08-07 18:13:28], mode=BUILD, duration=0:00:03.462, duration_ms=3462, data={name=pcam_gray128, configuration=Debug, clean_build=false}
+timestamp=[2026-08-07 18:15:45], mode=BUILD, duration=0:00:02.005, duration_ms=2005, data={name=pcam_gray128, configuration=Debug, clean_build=false}
+timestamp=[2026-08-07 18:43:56], mode=PLATFORM_GENERATION, duration=0:00:05.608, duration_ms=5608, data={name=pcam_gray128_platform}
+timestamp=[2026-08-07 18:44:17], mode=PLATFORM_GENERATION, duration=0:00:19.313, duration_ms=19313, data={name=pcam_gray128_platform}
+timestamp=[2026-08-07 18:45:02], mode=BUILD, duration=0:00:01.997, duration_ms=1997, data={name=pcam_gray128, configuration=Debug, clean_build=false}
+timestamp=[2026-08-07 19:13:29], mode=PLATFORM_GENERATION, duration=0:00:01.810, duration_ms=1810, data={name=pcam_gray128_platform}
+timestamp=[2026-08-07 19:24:57], mode=BUILD, duration=0:00:00.692, duration_ms=692, data={name=pcam_gray128, configuration=Debug, clean_build=false}
