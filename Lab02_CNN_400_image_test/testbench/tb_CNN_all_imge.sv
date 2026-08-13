@@ -20,6 +20,9 @@ module tb_CNN_400_imge;
 	logic done;
 	logic busy;
 	logic result;
+	logic [3:0] sw;
+	logic cnn_led;
+	logic [7:0] probability_data;
 
 	logic [$clog2(IMG_PIXELS)-1:0] img_raddr;
 	logic signed [7:0] img_rdata;
@@ -46,11 +49,14 @@ module tb_CNN_400_imge;
 		.sysclk   (clk),
 		.rst_n    (rst_n),
 		.start    (start),
+		.sw       (sw),
 		.done     (done),
 		.busy     (busy),
 		.result   (result),
 		.img_raddr(img_raddr),
-		.img_rdata(img_rdata)
+		.img_rdata(img_rdata),
+		.cnn_led  (cnn_led),
+		.probability_data(probability_data)
 	);
 
 	// 125 MHz clock (8 ns period)
@@ -153,6 +159,7 @@ module tb_CNN_400_imge;
 			wait_done(TIMEOUT_CYCLES, done_ok);
 			if (!done_ok)
 				return;
+			@(posedge clk);
 
 			// FC 최종 score를 저장해 threshold sweep에서 재사용한다.
 			score_s8 = $signed(dut.U_FC.u_fc_core.quantized_result_s8);
@@ -165,6 +172,8 @@ module tb_CNN_400_imge;
 				eval_nonperson_count = eval_nonperson_count + 1;
 
 			pred_label = (result == 1'b1) ? "person" : "nonperson";
+			$display("[PROB][%0d/%0d] %s | probability_data=%0d (0x%02h)",
+				case_seq, TOTAL_CASES, mem_path, $signed(probability_data), probability_data);
 
 			if (result !== expected_result) begin
 				err_count = err_count + 1;
@@ -307,6 +316,7 @@ module tb_CNN_400_imge;
 		clk = 1'b0;
 		rst_n = 1'b0;
 		start = 1'b0;
+		sw = 4'd8;
 		err_count = 0;
 		pass_count = 0;
 		fail_count = 0;
