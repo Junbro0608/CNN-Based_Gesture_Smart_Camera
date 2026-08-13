@@ -457,6 +457,19 @@ def build_be64_sheet_rows_from_conv(conv_rows):
     return packed_rows
 
 
+def pack_fc_word_bytes(chunk, chunk_infos):
+    """Pack FC bytes so the PE logic sees the intended byte lanes.
+
+    For weight words, the first byte in the stream must land in the low byte of
+    the 64-bit word, matching weight_word[7:0] in the FC PE array.
+    For bias words, the first 32-bit bias is placed in the low 32-bit half and
+    the second bias in the high 32-bit half of the 64-bit word.
+    """
+    if all(info["param_type"] == "bias" for info in chunk_infos):
+        return chunk[4:8] + chunk[0:4]
+    return list(reversed(chunk))
+
+
 def build_be64_sheet_rows_from_fc(fc_rows):
     packed_rows = []
     word_addr = 0
@@ -505,14 +518,7 @@ def build_be64_sheet_rows_from_fc(fc_rows):
         end = (addr + 1) * 8
         chunk = byte_stream[start:end]
         chunk_infos = byte_infos[start:end]
-        if all(info["param_type"] == "bias" for info in chunk_infos):
-            # FC bias words hold out1 in [63:32] and out0 in [31:0].
-            # Keep each signed int32 in big-endian byte order; only exchange
-            # the two 32-bit positions from the export stream.
-            word_bytes = chunk[4:8] + chunk[0:4]
-        else:
-            # FC weight bytes map output lane 0 to weight_word[7:0].
-            word_bytes = list(reversed(chunk))
+        word_bytes = pack_fc_word_bytes(chunk, chunk_infos)
         labels_in_word = []
         seen = set()
         for info in chunk_infos:

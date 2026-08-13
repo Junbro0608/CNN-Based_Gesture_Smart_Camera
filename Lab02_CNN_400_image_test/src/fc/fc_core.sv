@@ -11,6 +11,7 @@ module fc_core #(
 ) (
     input logic clk,
     input logic rst_n,
+    input logic [3:0] threshold_sel,
     input logic start,
     input logic finish_en,
     input logic [2:0] layer,
@@ -28,7 +29,9 @@ module fc_core #(
 
     output logic core_data_write_en,
     output logic [$clog2(DATA_ADDR_WIDTH)-1:0] core_data_write_offset,
-    output logic [DATA_DATA_WIDTH-1:0] core_data_write_data
+    output logic [DATA_DATA_WIDTH-1:0] core_data_write_data,
+    output logic signed [7:0] quantized_write_s8,
+    output logic signed [8:0] quantized_write_s9
 );
 
     localparam INPUT_INDEX_WIDTH = $clog2(MAX_INPUT_LENGTH);
@@ -37,7 +40,9 @@ module fc_core #(
     localparam DATA_ADDR_BITS = $clog2(DATA_ADDR_WIDTH);
 
     // Final FC output is classified in the int8 requantized domain.
-    localparam signed [7:0] OUTPUT_THRESHOLD_QUANT = 8'sd0;
+    // threshold_sel maps to 16 equal bins over int8 range:
+    // 0 -> -128, 1 -> -112, ..., 8 -> 0, ..., 15 -> +112.
+    logic signed [8:0] output_threshold_s9;
 
     logic               start_accept;
     logic               controller_busy;
@@ -60,7 +65,6 @@ module fc_core #(
     logic [DATA_ADDR_BITS-1:0] controller_data_write_offset;
     logic [DATA_DATA_WIDTH-1:0] controller_data_write_data;
     logic signed [ 7:0] activation_s8;
-    logic signed [ 7:0] quantized_write_s8;
     logic               quantized_write_valid;
     logic signed [31:0] quant_accumulator_s32;
     logic signed [ 7:0] quantized_result_s8;
@@ -93,6 +97,9 @@ module fc_core #(
     assign fc_write_s8 = (layer == 3'd4 && quantized_result_s8 < 0)
         ? 8'sd0 : quantized_result_s8;
     assign controller_data_write_data = fc_write_s8;
+    assign output_threshold_s9 =
+        $signed({1'b0, threshold_sel, 4'b0000}) - 9'sd128;
+    assign quantized_write_s9 = {quantized_write_s8[7], quantized_write_s8};
 
     // Keep the controller FSM and requantize mux off the Data Buffer write
     // path. The synchronous RAM receives this stable registered command.
@@ -135,8 +142,7 @@ module fc_core #(
             // 새 연산을 수락하면 이전 최종 결과를 지운다.
             result <= 1'b0;
         end else if (result_capture_en) begin
-            result <= ($signed(quantized_write_s8) >=
-                       $signed(OUTPUT_THRESHOLD_QUANT));
+            result <= (quantized_write_s9 >= output_threshold_s9);
         end
     end
 
